@@ -1,0 +1,101 @@
+{% extends "base_v2.html" %}
+{% block title %}Triage Board – Email{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/triage-board.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="tb-container">
+    <!-- Top toolbar -->
+    <div class="tb-toolbar">
+        <h1 class="tb-title">Triage Board</h1>
+        <div class="tb-toolbar-actions">
+            <input type="text" id="tb-search" class="v2-input tb-search" placeholder="Search…" oninput="tbFilterEmails()">
+
+            <div class="tb-filter-chips" id="tb-filter-chips">
+                <button class="v2-btn v2-btn-sm v2-btn-secondary tb-chip active" data-filter="all" onclick="tbSetTagFilter('all')">All</button>
+                <button class="v2-btn v2-btn-sm v2-btn-ghost tb-chip" data-filter="Scheduling" onclick="tbSetTagFilter('Scheduling')">📅 Scheduling</button>
+                <button class="v2-btn v2-btn-sm v2-btn-ghost tb-chip" data-filter="Question" onclick="tbSetTagFilter('Question')">❓ Question</button>
+                <button class="v2-btn v2-btn-sm v2-btn-ghost tb-chip" data-filter="Direct" onclick="tbSetTagFilter('Direct')">👤 Direct</button>
+                <button class="v2-btn v2-btn-sm v2-btn-ghost tb-chip" data-filter="Work" onclick="tbSetTagFilter('Work')">💼 Work</button>
+            </div>
+
+            <label class="v2-toggle tb-toggle-ml">
+                <input type="checkbox" id="tb-hide-ml" onchange="tbFilterEmails()">
+                <span class="v2-toggle-track"></span>
+                <span>Hide mailing lists</span>
+            </label>
+
+            <span class="tb-ai-status" id="tb-ai-status" title="Urgency scoring source">AI scoring</span>
+
+            <button class="v2-btn v2-btn-ghost v2-btn-icon" onclick="tbLoadEmails()" title="Refresh">↻</button>
+        </div>
+    </div>
+
+    <!-- Three triage columns -->
+    <div class="tb-columns">
+        <div class="tb-column" id="tb-col-reply">
+            <div class="tb-column-header">
+                <div class="tb-column-title">
+                    <span class="tb-column-icon">💬</span>
+                    Needs Reply
+                    <span class="tb-column-count" id="tb-count-reply">0</span>
+                </div>
+                <div class="v2-tooltip-wrapper">
+                    <span class="tb-sort-hint">ⓘ</span>
+                    <span class="v2-tooltip">Ranked by urgency signals</span>
+                </div>
+            </div>
+            <div class="tb-column-body" id="tb-body-reply">
+                <div class="v2-loading"><div class="v2-spinner"></div></div>
+            </div>
+        </div>
+
+        <div class="tb-column" id="tb-col-schedule">
+            <div class="tb-column-header">
+                <div class="tb-column-title">
+                    <span class="tb-column-icon">📅</span>
+                    To Schedule
+                    <span class="tb-column-count" id="tb-count-schedule">0</span>
+                </div>
+                <div class="v2-tooltip-wrapper">
+                    <span class="tb-sort-hint">ⓘ</span>
+                    <span class="v2-tooltip">Ranked by urgency signals</span>
+                </div>
+            </div>
+            <div class="tb-column-body" id="tb-body-schedule">
+                <div class="v2-loading"><div class="v2-spinner"></div></div>
+            </div>
+        </div>
+
+        <div class="tb-column" id="tb-col-fyi">
+            <div class="tb-column-header">
+                <div class="tb-column-title">
+                    <span class="tb-column-icon">📋</span>
+                    FYI / No Action
+                    <span class="tb-column-count" id="tb-count-fyi">0</span>
+                </div>
+                <div class="v2-tooltip-wrapper">
+                    <span class="tb-sort-hint">ⓘ</span>
+                    <span class="v2-tooltip">Ranked by urgency signals</span>
+                </div>
+            </div>
+            <div class="tb-column-body" id="tb-body-fyi">
+                <div class="v2-loading"><div class="v2-spinner"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Email detail modal -->
+<div class="v2-modal-overlay" id="tb-detail-modal" style="display:none;">
+    <div class="v2-modal" style="max-width:620px;">
+        <button class="v2-modal-close" onclick="tbCloseDetail()">✕</button>
+        <div id="tb-detail-content"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/triage-board.js') }}"></script>
+{% endblock %}

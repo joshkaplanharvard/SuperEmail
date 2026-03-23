@@ -1,0 +1,260 @@
+/* ── Common styles shared across both prototypes ─────────────────── */
+:root {
+    --bg:           #f5f5f7;
+    --surface:      #ffffff;
+    --surface-alt:  #fafafa;
+    --border:       #e5e5e5;
+    --text:         #1d1d1f;
+    --text-muted:   #86868b;
+    --primary:      #0071e3;
+    --primary-hover:#005bb5;
+    --danger:       #ff3b30;
+    --success:      #34c759;
+    --warning:      #ff9f0a;
+    --radius:       12px;
+    --radius-sm:    8px;
+    --shadow:       0 2px 12px rgba(0,0,0,0.08);
+    --shadow-lg:    0 8px 30px rgba(0,0,0,0.12);
+    --font:         'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --transition:   0.2s ease;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+}
+
+/* ── Top navigation ──────────────────────────────────────────────── */
+.top-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    height: 56px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+.nav-brand {
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--text);
+    text-decoration: none;
+}
+.nav-links {
+    display: flex;
+    gap: 8px;
+}
+.nav-link {
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 14px;
+    transition: var(--transition);
+}
+.nav-link:hover { background: var(--bg); color: var(--text); }
+.nav-link.active { background: var(--primary); color: #fff; }
+.nav-user {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────── */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition);
+}
+.btn-primary {
+    background: var(--primary);
+    color: #fff;
+}
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-secondary {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+.btn-secondary:hover { background: var(--border); }
+.btn-small {
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+/* ── Search box ──────────────────────────────────────────────────── */
+.search-box {
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 14px;
+    outline: none;
+    width: 220px;
+    transition: var(--transition);
+}
+.search-box:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,113,227,0.15); }
+
+/* ── Modal ───────────────────────────────────────────────────────── */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    backdrop-filter: blur(4px);
+}
+.modal {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 28px;
+    width: 90%;
+    max-width: 640px;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+    position: relative;
+}
+.modal-close {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-muted);
+}
+.modal-close:hover { color: var(--text); }
+
+/* ── Compose form ────────────────────────────────────────────────── */
+.compose-form { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.compose-input {
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 14px;
+    outline: none;
+    resize: vertical;
+}
+.compose-input:focus { border-color: var(--primary); }
+.compose-actions { display: flex; gap: 8px; }
+
+/* ── Loading ─────────────────────────────────────────────────────── */
+.loading-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px;
+    color: var(--text-muted);
+}
+.spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-bottom: 12px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Landing page ────────────────────────────────────────────────── */
+.landing {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 60px 24px;
+    text-align: center;
+}
+.landing h1 { font-size: 36px; font-weight: 700; margin-bottom: 8px; }
+.landing-subtitle { color: var(--text-muted); font-size: 16px; margin-bottom: 48px; }
+
+.prototype-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+}
+.proto-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 24px;
+    text-decoration: none;
+    color: var(--text);
+    text-align: left;
+    transition: var(--transition);
+    box-shadow: var(--shadow);
+}
+.proto-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--primary);
+}
+.proto-icon { font-size: 40px; margin-bottom: 12px; }
+.proto-card h2 { font-size: 20px; margin-bottom: 8px; }
+.proto-desc { color: var(--text-muted); font-size: 14px; margin-bottom: 16px; line-height: 1.6; }
+.proto-features {
+    list-style: none;
+    margin-bottom: 20px;
+}
+.proto-features li {
+    font-size: 13px;
+    color: var(--text-muted);
+    padding: 4px 0;
+    padding-left: 18px;
+    position: relative;
+}
+.proto-features li::before {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    color: var(--success);
+    font-weight: 600;
+}
+.proto-cta {
+    display: inline-block;
+    color: var(--primary);
+    font-weight: 600;
+    font-size: 14px;
+}
+
+/* ── Utility ─────────────────────────────────────────────────────── */
+.main-content {
+    min-height: calc(100vh - 56px);
+}
+.avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 14px;
+    color: #fff;
+    flex-shrink: 0;
+}
+
+@media (max-width: 700px) {
+    .prototype-cards { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Calendar-Integrated Email{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/calendar.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="cal-email-container">
+    <!-- Left panel: inbox -->
+    <div class="inbox-panel">
+        <div class="inbox-header">
+            <h1 class="inbox-title">📅 Calendar Email</h1>
+            <div class="inbox-actions">
+                <input type="text" id="search-input" placeholder="Search…" class="search-box">
+                <button class="btn btn-secondary" onclick="loadInbox()">↻</button>
+                <button class="btn btn-primary" onclick="openComposer()">✉ Compose</button>
+            </div>
+        </div>
+        <div class="inbox-list" id="inbox-list">
+            <div class="loading-overlay" id="loading">
+                <div class="spinner"></div>
+                <p>Loading inbox…</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right panel: context (email detail + calendar) -->
+    <div class="context-panel" id="context-panel">
+        <div class="context-placeholder">
+            <div class="placeholder-icon">📬</div>
+            <p>Select an email to view details</p>
+            <p class="placeholder-hint">Click on a sender's name or avatar to see their calendar availability</p>
+        </div>
+    </div>
+</div>
+
+<!-- Compose modal -->
+<div class="modal-overlay" id="compose-modal" style="display:none;">
+    <div class="modal">
+        <button class="modal-close" onclick="closeComposer()">&times;</button>
+        <h2>✉ Compose Email</h2>
+        <div class="compose-form">
+            <input type="email" id="compose-to" placeholder="To" class="compose-input" oninput="onComposeToInput()">
+            <div id="compose-calendar-btn" class="compose-calendar-btn" style="display:none;">
+                <button class="btn btn-secondary" onclick="viewComposeCalendar()">📅 View Calendar Availability</button>
+            </div>
+            <input type="text" id="compose-subject" placeholder="Subject" class="compose-input">
+            <textarea id="compose-body" placeholder="Message…" rows="6" class="compose-input"></textarea>
+            <div class="compose-actions">
+                <button class="btn btn-primary" onclick="sendEmail()">Send</button>
+                <button class="btn btn-secondary" id="suggest-time-btn" style="display:none;" onclick="insertTimeSuggestion()">
+                    📅 Suggest a Time
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/calendar.js') }}"></script>
+{% endblock %}

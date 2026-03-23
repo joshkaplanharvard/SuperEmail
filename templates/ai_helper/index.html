@@ -1,0 +1,36 @@
+{% extends "base_v2.html" %}
+{% block title %}AI Helper{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ai-helper.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="ah-wrap">
+    <div class="ah-header">
+        <div>
+            <h1 class="ah-title">AI Helper</h1>
+            <p class="ah-subtitle">Quick chat + email drafting test through Harvard OpenAI API.</p>
+        </div>
+        <div class="ah-mode-group" id="ah-mode-group">
+            <button class="v2-btn v2-btn-sm v2-btn-secondary ah-mode active" data-mode="chat" onclick="ahSetMode('chat')">Chat</button>
+            <button class="v2-btn v2-btn-sm v2-btn-ghost ah-mode" data-mode="email" onclick="ahSetMode('email')">Email Draft</button>
+        </div>
+    </div>
+
+    <div class="ah-chat" id="ah-chat"></div>
+
+    <div class="ah-status" id="ah-status">Ready</div>
+
+    <div class="ah-input-row">
+        <textarea id="ah-input" class="v2-textarea ah-input" rows="4" placeholder="Ask a question or describe the email you want drafted..."></textarea>
+        <div class="ah-actions">
+            <button class="v2-btn v2-btn-ghost" onclick="ahClearChat()">Clear</button>
+            <button class="v2-btn v2-btn-primary" onclick="ahSend()">Send</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/ai-helper.js') }}"></script>
+{% endblock %}

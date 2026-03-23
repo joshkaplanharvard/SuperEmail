@@ -1,0 +1,122 @@
+.ah-wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    height: calc(100vh - 64px);
+    display: grid;
+    grid-template-rows: auto 1fr auto auto;
+    gap: 10px;
+    padding: 14px;
+}
+
+.ah-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.ah-title {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.ah-subtitle {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.ah-mode-group {
+    display: flex;
+    gap: 6px;
+}
+
+.ah-chat {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, #101015 0%, #0b0b0d 100%);
+    padding: 12px;
+    overflow-y: auto;
+    min-height: 280px;
+}
+
+.ah-bubble-row {
+    display: flex;
+    margin-bottom: 10px;
+}
+
+.ah-bubble-row.user {
+    justify-content: flex-end;
+}
+
+.ah-bubble {
+    max-width: min(760px, 92%);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    padding: 9px 10px;
+}
+
+.ah-bubble-row.user .ah-bubble {
+    background: var(--primary-muted);
+    border-color: rgba(59,130,246,0.28);
+}
+
+.ah-role {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+}
+
+.ah-content {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+}
+
+.ah-meta {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.ah-status {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.ah-status.error {
+    color: var(--danger);
+}
+
+.ah-input-row {
+    display: grid;
+    gap: 8px;
+}
+
+.ah-input {
+    min-height: 86px;
+}
+
+.ah-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+@media (max-width: 760px) {
+    .ah-wrap {
+        height: calc(100vh - 56px);
+        padding: 10px;
+    }
+
+    .ah-bubble {
+        max-width: 100%;
+    }
+}

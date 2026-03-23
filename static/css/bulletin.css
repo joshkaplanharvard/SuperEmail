@@ -1,0 +1,258 @@
+/* ── Bulletin Board Prototype Styles ──────────────────────────────── */
+
+.bulletin-container {
+    padding: 20px 24px;
+    height: calc(100vh - 56px);
+    display: flex;
+    flex-direction: column;
+}
+
+/* Toolbar */
+.bulletin-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    flex-shrink: 0;
+}
+.bulletin-title { font-size: 22px; font-weight: 700; }
+.toolbar-actions { display: flex; gap: 8px; align-items: center; }
+
+/* Board (scrollable grid) */
+.board {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 12px;
+    position: relative;
+    align-content: start;
+}
+
+/* Individual card */
+.bulletin-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px;
+    cursor: pointer;
+    transition: var(--transition);
+    position: relative;
+}
+.bulletin-card:hover {
+    box-shadow: var(--shadow);
+    border-color: var(--primary);
+    transform: translateY(-1px);
+}
+.bulletin-card.pinned {
+    border-left: 3px solid var(--warning);
+}
+.card-pin {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: none;
+    border: none;
+    font-size: 16px;
+    cursor: pointer;
+    opacity: 0.4;
+    transition: var(--transition);
+}
+.card-pin:hover, .bulletin-card.pinned .card-pin { opacity: 1; }
+.card-subject {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 6px;
+    padding-right: 24px;
+    line-height: 1.3;
+}
+.card-snippet {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.card-participants {
+    display: flex;
+    gap: -4px;
+}
+.card-participants .avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 10px;
+    border: 2px solid var(--surface);
+    margin-left: -6px;
+}
+.card-participants .avatar:first-child { margin-left: 0; }
+.card-msg-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+/* Modal enhancements for bulletin */
+.modal-header h2 {
+    font-size: 20px;
+    margin-bottom: 4px;
+}
+.modal-meta {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+.modal-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+.btn-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 12px;
+    font-size: 13px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+    color: var(--text);
+    cursor: pointer;
+    transition: var(--transition);
+    font-family: var(--font);
+}
+.btn-icon:hover {
+    background: var(--bg);
+    border-color: var(--text-muted);
+}
+.btn-icon.btn-danger {
+    color: var(--danger);
+}
+.btn-icon.btn-danger:hover {
+    background: #fff0f0;
+    border-color: var(--danger);
+}
+.modal-body {
+    max-height: 400px;
+    overflow-y: auto;
+    margin-bottom: 16px;
+}
+.thread-message {
+    padding: 12px 16px;
+    border-left: 3px solid var(--border);
+    margin-bottom: 12px;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    background: var(--surface-alt);
+}
+.thread-message-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.thread-message-sender {
+    font-weight: 600;
+    font-size: 13px;
+}
+.thread-message-date {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.thread-message-body {
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.modal-reply textarea {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 14px;
+    resize: vertical;
+    outline: none;
+    margin-bottom: 8px;
+}
+.modal-reply textarea:focus { border-color: var(--primary); }
+
+/* Reply mode toggle & recipients */
+.reply-recipients {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    line-height: 1.5;
+}
+.reply-recipients .reply-cc-label {
+    display: block;
+}
+.reply-mode-toggle {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+.reply-mode-btn {
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity .15s, background .15s;
+}
+.reply-mode-btn.active {
+    opacity: 1;
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+}
+.reply-mode-btn:hover { opacity: 1; }
+
+/* Category badge on card */
+.card-category {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-bottom: 6px;
+    background: var(--bg);
+    color: var(--text-muted);
+}
+.category-scheduling   { color: #007aff; }
+.category-action-items { color: #ff3b30; }
+.category-ideas        { color: #ff9f0a; }
+.category-updates      { color: #34c759; }
+.category-questions    { color: #af52de; }
+.category-important    { color: #ff9500; }
+.category-general      { color: #8e8e93; }
+
+/* Unread indicator */
+.bulletin-card.unread {
+    border-left: 3px solid var(--primary);
+}
+.bulletin-card.unread .card-subject {
+    font-weight: 800;
+}
+.unread-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--primary);
+    vertical-align: middle;
+    margin-right: 4px;
+    flex-shrink: 0;
+}

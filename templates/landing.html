@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}CSO Email Prototypes – Choose a Prototype{% endblock %}
+
+{% block content %}
+<div class="landing">
+    <h1>CSO: Parallel Prototyping</h1>
+    <p class="landing-subtitle">Two alternative email interfaces. Choose one to explore.</p>
+
+    <div class="prototype-cards">
+        <a href="/bulletin" class="proto-card proto-a">
+            <div class="proto-icon">📌</div>
+            <h2>Prototype A: Bulletin Board</h2>
+            <p class="proto-desc">
+                Important ideas never get buried in a chronological thread.
+                Emails are organized as cards on a visual board you can scan at a glance.
+            </p>
+            <ul class="proto-features">
+                <li>Action items surfaced at the top automatically</li>
+            </ul>
+            <span class="proto-cta">Open Bulletin Board →</span>
+        </a>
+
+        <a href="/calendar-email" class="proto-card proto-b">
+            <div class="proto-icon">📅</div>
+            <h2>Prototype B: Calendar Email</h2>
+            <p class="proto-desc">
+                Click any sender and their <strong>live calendar availability</strong> appears instantly.
+                No more back-and-forth about "when are you free?"
+            </p>
+            <ul class="proto-features">
+                <li>Reduces scheduling friction on both sides</li>
+            </ul>
+            <span class="proto-cta">Open Calendar Email →</span>
+        </a>
+    </div>
+
+    <h2 style="margin-top:48px;margin-bottom:8px;">V2 — Redesigned Prototypes</h2>
+    <p class="landing-subtitle" style="margin-bottom:24px;">Updated versions based on CSO user testing findings.</p>
+
+    <div class="prototype-cards">
+        <a href="/scheduling-assist" class="proto-card proto-a" style="border-color:#3b82f6;">
+            <div class="proto-icon">⚡</div>
+            <h2>Variant A: Scheduling Assist</h2>
+            <p class="proto-desc">
+                Contextual scheduling panel with smart time suggestions,
+                confidence levels, privacy-first availability, and one-click reply drafting.
+            </p>
+            <ul class="proto-features">
+                <li>Auto-detects scheduling intent in emails</li>
+                <li>Suggests mutual free/busy time slots</li>
+                <li>Dark mode, compact Superhuman-style UI</li>
+            </ul>
+            <span class="proto-cta">Open Scheduling Assist →</span>
+        </a>
+
+        <a href="/triage-board" class="proto-card proto-b" style="border-color:#22c55e;">
+            <div class="proto-icon">🎯</div>
+            <h2>Variant B: Triage Board</h2>
+            <p class="proto-desc">
+                Calmer, structured triage with urgency signals. No timestamps.
+                Emails sorted into Needs Reply, To Schedule, and FYI buckets.
+            </p>
+            <ul class="proto-features">
+                <li>Urgency-ranked with explainable scoring</li>
+                <li>One-click triage between three buckets</li>
+                <li>Filter by tags, hide mailing lists</li>
+            </ul>
+            <span class="proto-cta">Open Triage Board →</span>
+        </a>
+    </div>
+</div>
+{% endblock %}

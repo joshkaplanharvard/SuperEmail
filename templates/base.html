@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="top-nav">
+        <div class="nav-links">
+            <a href="/bulletin" class="nav-link {% if request.path.startswith('/bulletin') %}active{% endif %}">
+                📌 Bulletin Board
+            </a>
+            <a href="/calendar-email" class="nav-link {% if request.path.startswith('/calendar') %}active{% endif %}">
+                📅 Calendar Email
+            </a>
+            <span style="color:#ccc;padding:0 4px;">|</span>
+            <a href="/scheduling-assist" class="nav-link {% if request.path.startswith('/scheduling') %}active{% endif %}">
+                ⚡ Scheduling Assist
+            </a>
+            <a href="/triage-board" class="nav-link {% if request.path.startswith('/triage') %}active{% endif %}">
+                🎯 Triage Board
+            </a>
+        </div>
+        <div class="nav-user" id="nav-user"></div>
+    </nav>
+
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script>
+        // Load user profile into nav
+        fetch('/api/profile')
+            .then(r => r.json())
+            .then(data => {
+                if (data.email) {
+                    document.getElementById('nav-user').textContent = data.email;
+                }
+            })
+            .catch(() => {});
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

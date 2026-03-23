@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}CSO Email Prototypes v2{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/v2-common.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <nav class="v2-nav">
+        <div class="v2-nav-links">
+            <a href="/" class="v2-nav-link">Home</a>
+            <a href="/scheduling-assist" class="v2-nav-link {% if request.path.startswith('/scheduling') %}active{% endif %}">
+                Scheduling Assist
+            </a>
+            <a href="/triage-board" class="v2-nav-link {% if request.path.startswith('/triage') %}active{% endif %}">
+                Triage Board
+            </a>
+            <a href="/ai-helper" class="v2-nav-link {% if request.path.startswith('/ai-helper') %}active{% endif %}">
+                AI Helper
+            </a>
+        </div>
+        <div class="v2-nav-user" id="nav-user"></div>
+    </nav>
+
+    <main class="v2-main">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script>
+        function renderNavUser(email) {
+            const navUser = document.getElementById('nav-user');
+            if (!navUser) return;
+            navUser.innerHTML = `
+                <span>${email || ''}</span>
+                <button id="nav-logout" class="v2-btn v2-btn-sm v2-btn-ghost" style="margin-left:8px;">Logout</button>
+            `;
+            const logoutBtn = document.getElementById('nav-logout');
+            if (!logoutBtn) return;
+            logoutBtn.addEventListener('click', async () => {
+                logoutBtn.disabled = true;
+                logoutBtn.textContent = 'Logging out...';
+                try {
+                    await fetch('/api/logout', { method: 'POST' });
+                } catch (_) {
+                    // Continue to home even if request fails.
+                }
+                window.location.href = '/';
+            });
+        }
+
+        fetch('/api/profile')
+            .then(r => r.json())
+            .then(data => {
+                if (data.email) {
+                    renderNavUser(data.email);
+                } else {
+                    renderNavUser('');
+                }
+            })
+            .catch(() => {
+                renderNavUser('');
+            });
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

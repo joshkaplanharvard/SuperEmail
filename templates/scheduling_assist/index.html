@@ -1,0 +1,64 @@
+{% extends "base_v2.html" %}
+{% block title %}Scheduling Assist – Email{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scheduling-assist.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="sa-container">
+    <!-- Left: Inbox list -->
+    <div class="sa-inbox">
+        <div class="sa-inbox-header">
+            <h1 class="sa-inbox-title">Inbox</h1>
+            <div class="sa-inbox-actions">
+                <input type="text" id="sa-search" class="v2-input sa-search" placeholder="Search emails…">
+                <button class="v2-btn v2-btn-ghost v2-btn-icon" onclick="saLoadInbox()" title="Refresh">↻</button>
+                <button class="v2-btn v2-btn-primary v2-btn-sm" onclick="saOpenComposer()">Compose</button>
+            </div>
+        </div>
+        <div class="sa-inbox-list" id="sa-inbox-list">
+            <div class="v2-loading"><div class="v2-spinner"></div><span>Loading inbox…</span></div>
+        </div>
+    </div>
+
+    <!-- Center: Email detail -->
+    <div class="sa-detail" id="sa-detail">
+        <div class="sa-detail-placeholder">
+            <div class="sa-placeholder-icon">✉</div>
+            <p>Select an email to read</p>
+        </div>
+    </div>
+
+    <!-- Right: Scheduling Assist panel (hidden until triggered) -->
+    <div class="sa-panel" id="sa-panel">
+        <div class="sa-panel-header">
+            <span class="sa-panel-title">Scheduling Assist</span>
+            <button class="v2-btn v2-btn-ghost v2-btn-icon" onclick="saClosePanel()" title="Close">✕</button>
+        </div>
+        <div class="sa-panel-body" id="sa-panel-body">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+</div>
+
+<!-- Compose modal -->
+<div class="v2-modal-overlay" id="sa-compose-modal" style="display:none;">
+    <div class="v2-modal">
+        <button class="v2-modal-close" onclick="saCloseComposer()">✕</button>
+        <h2 style="font-size:16px;font-weight:600;margin-bottom:16px;">New Email</h2>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+            <input type="email" id="sa-compose-to" class="v2-input" placeholder="To">
+            <input type="text" id="sa-compose-subject" class="v2-input" placeholder="Subject">
+            <textarea id="sa-compose-body" class="v2-textarea" rows="6" placeholder="Write your message…"></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button class="v2-btn v2-btn-secondary" onclick="saCloseComposer()">Cancel</button>
+                <button class="v2-btn v2-btn-primary" onclick="saSendCompose()">Send</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/scheduling-assist.js') }}"></script>
+{% endblock %}

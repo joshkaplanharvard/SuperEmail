@@ -1,0 +1,569 @@
+"""
+CSO Parallel Prototyping – Email/CMC UI
+Two alternative email interfaces built on top of Gmail:
+
+  Prototype A – Bulletin Board:  emails as pinnable cards on a spatial board
+  Prototype B – Calendar Email:  click a sender → see their live availability
+"""
+import json
+import os
+import re
+import time
+from flask import (
+    Flask,
+    jsonify,
+    render_template,
+    request,
+    redirect,
+    session,
+    url_for,
+)
+from config import SECRET_KEY
+from config import TOKEN_FILE
+import gmail_client
+import calendar_client
+import harvard_ai_client
+
+app = Flask(__name__)
+app.secret_key = SECRET_KEY
+
+# ── Simple in-memory email cache (avoids re-fetching on view switch) ────
+_email_cache = {}          # key = (query, max_results) -> {"emails": [...], "ts": float}
+_CACHE_TTL = 120           # seconds
+
+
+def _get_cached_emails(query="in:inbox", max_results=40):
+    """Return emails from cache if fresh, otherwise fetch and cache."""
+    key = (query, max_results)
+    cached = _email_cache.get(key)
+    if cached and (time.time() - cached["ts"]) < _CACHE_TTL:
+        return cached["emails"]
+    emails = gmail_client.fetch_emails(max_results=max_results, query=query)
+    _email_cache[key] = {"emails": emails, "ts": time.time()}
+    return emails
+
+
+def _invalidate_cache():
+    """Clear the email cache (call after mutations like send/delete/mark)."""
+    _email_cache.clear()
+
+
+# ────────────────────────────────────────────────────────────────────
+# Landing page – choose which prototype to explore
+# ────────────────────────────────────────────────────────────────────
+
+@app.route("/")
+def landing():
+    return render_template("landing.html")
+
+
+# ════════════════════════════════════════════════════════════════════
+# V2 PROTOTYPES  –  Updated designs from CSO user testing findings
+# ════════════════════════════════════════════════════════════════════
+
+@app.route("/scheduling-assist")
+def scheduling_assist_index():
+    return render_template("scheduling_assist/index.html")
+
+
+@app.route("/triage-board")
+def triage_board_index():
+    return render_template("triage_board/index.html")
+
+
+@app.route("/ai-helper")
+def ai_helper_index():
+    return render_template("ai_helper/index.html")
+
+
+@app.route("/api/triage/score", methods=["POST"])
+def api_triage_score():
+    """Return optional AI urgency scoring for triage board threads."""
+    if not harvard_ai_client.is_enabled():
+        return jsonify({"enabled": False, "results": [], "error": "HARVARD_OPENAI_API_KEY is not configured"})
+
+    payload = request.json or {}
+    threads = payload.get("threads", [])
+    if not isinstance(threads, list):
+        return jsonify({"enabled": True, "error": "threads must be a list"}), 400
+
+    # Keep requests bounded so scoring stays fast and cheap.
+    threads = threads[:40]
+
+    try:
+        scored = harvard_ai_client.score_threads(threads, include_usage=True)
+        return jsonify({
+            "enabled": True,
+            "results": scored.get("results", []),
+            "usage": scored.get("usage"),
+            "model": scored.get("model"),
+            "requestId": scored.get("id"),
+            "cached": scored.get("cached", False),
+        })
+    except Exception as e:
+        return jsonify({"enabled": True, "results": [], "error": str(e)}), 502
+
+
+@app.route("/api/ai-helper/chat", methods=["POST"])
+def api_ai_helper_chat():
+    """Simple chat/email-writing helper endpoint for validating Harvard AI access."""
+    if not harvard_ai_client.is_enabled():
+        return jsonify({"error": "HARVARD_OPENAI_API_KEY is not configured"}), 400
+
+    data = request.json or {}
+    message = (data.get("message") or "").strip()
+    mode = (data.get("mode") or "chat").strip().lower()
+    history = data.get("history") or []
+
+    if not message:
+        return jsonify({"error": "message is required"}), 400
+    if not isinstance(history, list):
+        return jsonify({"error": "history must be a list"}), 400
+
+    if mode == "email":
+        system_prompt = (
+            "You are an email writing assistant. "
+            "Write concise, professional emails with clear action items. "
+            "When relevant, include a subject line prefixed with 'Subject:'."
+        )
+    else:
+        system_prompt = (
+            "You are a helpful assistant for a university staff inbox workflow. "
+            "Be concise, practical, and structured."
+        )
+
+    try:
+        result = harvard_ai_client.chat_assistant(
+            user_message=message,
+            history=history,
+            system_prompt=system_prompt,
+        )
+        return jsonify({
+            "reply": result["content"],
+            "model": result.get("model"),
+            "requestId": result.get("id"),
+            "usage": result.get("usage"),
+            "cached": result.get("cached", False),
+            "mode": mode,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/ai/usage")
+def api_ai_usage():
+    """Return aggregate Harvard AI usage details for monitoring token/credit usage."""
+    try:
+        summary = harvard_ai_client.get_usage_summary(
+            recent_limit=int(request.args.get("recent", 20))
+        )
+        return jsonify({
+            "enabled": harvard_ai_client.is_enabled(),
+            **summary,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _extract_json_object(text):
+    """Best-effort JSON extraction from model output."""
+    raw = (text or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        pass
+
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return {}
+
+    try:
+        parsed = json.loads(raw[start : end + 1])
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def _coerce_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "y", "1"}:
+            return True
+        if normalized in {"false", "no", "n", "0"}:
+            return False
+    return False
+
+
+@app.route("/api/scheduling-assist/intent", methods=["POST"])
+def api_scheduling_assist_intent():
+    """Classify whether an email is scheduling-related using Harvard AI only."""
+    data = request.json or {}
+    email = data.get("email") or {}
+    if not isinstance(email, dict):
+        return jsonify({"error": "email must be an object"}), 400
+
+    subject = str(email.get("subject") or "")[:1000]
+    snippet = str(email.get("snippet") or "")[:2000]
+    body = str(email.get("body") or "")[:5000]
+
+    heuristic_words = [
+        "meet", "meeting", "schedule", "calendar", "availability", "available",
+        "free", "slot", "time", "catch up", "coffee", "lunch", "call",
+        "zoom", "sync", "office hours", "book", "when are you", "let's find",
+        "propose", "reschedule",
+    ]
+    text = (subject + " " + snippet + " " + body).lower()
+    heuristic_is_scheduling = any(word in text for word in heuristic_words)
+
+    if not harvard_ai_client.is_enabled():
+        return jsonify({
+            "enabled": False,
+            "isScheduling": heuristic_is_scheduling,
+            "confidence": "medium" if heuristic_is_scheduling else "low",
+            "source": "heuristic",
+            "reason": "AI not configured; classified by keyword matching.",
+        })
+
+    system_prompt = (
+        "You are an inbox intent classifier. "
+        "Decide if an email is asking to schedule/reschedule a meeting or coordinate time. "
+        "Return JSON only with this exact shape: "
+        "{\"isScheduling\":true|false,\"confidence\":\"high|medium|low\",\"reason\":\"short reason\"}. "
+        "Use true for explicit or implied coordination of dates/times/availability. "
+        "Use false for informational updates, FYIs, and non-time coordination requests."
+    )
+
+    user_payload = {
+        "email": {
+            "subject": subject,
+            "snippet": snippet,
+            "body": body,
+        }
+    }
+
+    try:
+        result = harvard_ai_client.chat_assistant(
+            user_message=json.dumps(user_payload),
+            system_prompt=system_prompt,
+        )
+        parsed = _extract_json_object(result.get("content", ""))
+
+        is_scheduling = _coerce_bool(parsed.get("isScheduling", False))
+        confidence = str(parsed.get("confidence") or "low").strip().lower()
+        if confidence not in {"high", "medium", "low"}:
+            confidence = "low"
+        reason = str(parsed.get("reason") or "").strip()[:200]
+        if not reason:
+            reason = "Classified from subject/snippet/body content."
+
+        return jsonify({
+            "enabled": True,
+            "isScheduling": is_scheduling,
+            "confidence": confidence,
+            "source": "ai",
+            "reason": reason,
+            "model": result.get("model"),
+            "usage": result.get("usage"),
+            "cached": result.get("cached", False),
+        })
+    except Exception:
+        return jsonify({
+            "enabled": True,
+            "isScheduling": heuristic_is_scheduling,
+            "confidence": "medium" if heuristic_is_scheduling else "low",
+            "source": "heuristic",
+            "reason": "AI call failed; classified by keyword matching.",
+        })
+
+
+# ════════════════════════════════════════════════════════════════════
+# PROTOTYPE A  –  Bulletin Board Email
+# ════════════════════════════════════════════════════════════════════
+
+@app.route("/bulletin")
+def bulletin_index():
+    return render_template("bulletin/index.html")
+
+
+@app.route("/api/bulletin/emails")
+def api_bulletin_emails():
+    """Return emails structured for the bulletin board view."""
+    query = request.args.get("q", "in:inbox")
+    max_results = int(request.args.get("max", 40))
+    try:
+        emails = _get_cached_emails(query=query, max_results=max_results)
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 500
+
+    # Group by thread so each thread becomes one "card"
+    threads = {}
+    for em in emails:
+        tid = em["threadId"]
+        if tid not in threads:
+            threads[tid] = {
+                "threadId": tid,
+                "subject": em["subject"],
+                "participants": [],
+                "snippet": em["snippet"],
+                "messages": [],
+                "latest_date": em["date"],
+                "labels": em["labels"],
+                "pinned": False,
+                "category": _auto_category(em),
+                "isUnread": False,
+            }
+        threads[tid]["messages"].append(em)
+        # Mark thread unread if any message is unread
+        if "UNREAD" in em.get("labels", []):
+            threads[tid]["isUnread"] = True
+        sender = {"name": em["from_name"], "email": em["from_email"]}
+        if sender not in threads[tid]["participants"]:
+            threads[tid]["participants"].append(sender)
+        # Also include To and Cc recipients so Reply All works
+        for field in ("to", "cc"):
+            for addr in _extract_addresses(em.get(field, "")):
+                entry = {"name": "", "email": addr}
+                if entry not in threads[tid]["participants"]:
+                    threads[tid]["participants"].append(entry)
+
+    return jsonify(list(threads.values()))
+
+
+@app.route("/api/bulletin/thread/<thread_id>")
+def api_bulletin_thread(thread_id):
+    """Return full thread messages for a card expansion."""
+    try:
+        messages = gmail_client.fetch_thread(thread_id)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(messages)
+
+
+@app.route("/api/bulletin/send", methods=["POST"])
+def api_bulletin_send():
+    """Post a new 'note' (email) to the bulletin board / thread."""
+    data = request.json
+    to = data.get("to", "")
+    subject = data.get("subject", "")
+    body = data.get("body", "")
+    thread_id = data.get("threadId")
+    try:
+        result = gmail_client.send_email(to, subject, body, thread_id=thread_id)
+        _invalidate_cache()
+        return jsonify({"status": "sent", "id": result.get("id")})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+_EMAIL_RE = re.compile(r'[\w.+-]+@[\w.-]+\.\w+')
+
+def _extract_addresses(header_value):
+    """Extract email addresses from a To/Cc header string."""
+    if not header_value:
+        return []
+    return _EMAIL_RE.findall(header_value)
+
+
+def _auto_category(email):
+    """Simple heuristic categorisation for bulletin board columns."""
+    subject = (email.get("subject") or "").lower()
+    labels = [l.lower() for l in email.get("labels", [])]
+
+    if any(w in subject for w in ["meeting", "schedule", "calendar", "invite"]):
+        return "Scheduling"
+    if any(w in subject for w in ["action", "todo", "task", "deadline", "due"]):
+        return "Action Items"
+    if any(w in subject for w in ["idea", "proposal", "brainstorm", "suggestion"]):
+        return "Ideas"
+    if any(w in subject for w in ["update", "status", "report", "progress"]):
+        return "Updates"
+    if any(w in subject for w in ["question", "help", "ask", "?"]):
+        return "Questions"
+    if "STARRED" in email.get("labels", []):
+        return "Important"
+    return "General"
+
+
+# ── Shared email actions (used by both prototypes) ──────────────────
+
+@app.route("/api/email/mark-read", methods=["POST"])
+def api_mark_read():
+    """Mark a thread or message as read."""
+    data = request.json
+    thread_id = data.get("threadId")
+    message_id = data.get("messageId")
+    try:
+        if thread_id:
+            gmail_client.mark_thread_read(thread_id)
+        elif message_id:
+            gmail_client.mark_read(message_id)
+        _invalidate_cache()
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/email/mark-unread", methods=["POST"])
+def api_mark_unread():
+    """Mark a thread or message as unread."""
+    data = request.json
+    thread_id = data.get("threadId")
+    message_id = data.get("messageId")
+    try:
+        if thread_id:
+            gmail_client.mark_thread_unread(thread_id)
+        elif message_id:
+            gmail_client.mark_unread(message_id)
+        _invalidate_cache()
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/email/delete", methods=["POST"])
+def api_delete_email():
+    """Trash a thread or message."""
+    data = request.json
+    thread_id = data.get("threadId")
+    message_id = data.get("messageId")
+    try:
+        if thread_id:
+            gmail_client.trash_thread(thread_id)
+        elif message_id:
+            gmail_client.trash_message(message_id)
+        _invalidate_cache()
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ════════════════════════════════════════════════════════════════════
+# PROTOTYPE B  –  Calendar-Integrated Email
+# ════════════════════════════════════════════════════════════════════
+
+@app.route("/calendar-email")
+def calendar_email_index():
+    return render_template("calendar_email/index.html")
+
+
+@app.route("/api/calendar-email/emails")
+def api_calendar_emails():
+    """Return emails for the calendar-email inbox view."""
+    query = request.args.get("q", "in:inbox")
+    max_results = int(request.args.get("max", 40))
+    try:
+        emails = _get_cached_emails(query=query, max_results=max_results)
+        return jsonify(emails)
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/calendar-email/contacts")
+def api_calendar_contacts():
+    """Return unique contacts extracted from recent emails."""
+    try:
+        emails = _get_cached_emails(query="in:inbox", max_results=60)
+        contacts = gmail_client.get_contacts_from_emails(emails)
+        return jsonify(contacts)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/calendar-email/availability/<path:email>")
+def api_calendar_availability(email):
+    """Return free/busy data for a specific contact."""
+    days = int(request.args.get("days", 7))
+    try:
+        availability = calendar_client.compute_availability(email, days_ahead=days)
+        return jsonify(availability)
+    except Exception as e:
+        return jsonify({"error": str(e), "email": email}), 500
+
+
+@app.route("/api/calendar-email/freebusy/<path:email>")
+def api_calendar_freebusy(email):
+    """Return raw free/busy slots for a specific contact."""
+    days = int(request.args.get("days", 7))
+    try:
+        fb = calendar_client.get_freebusy(email, days_ahead=days)
+        return jsonify({"email": email, "busy": fb["busy"], "accessible": fb["accessible"]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/calendar-email/my-events")
+def api_my_events():
+    """Return the authenticated user's upcoming calendar events."""
+    days = int(request.args.get("days", 7))
+    try:
+        events = calendar_client.get_my_events(days_ahead=days)
+        return jsonify(events)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/calendar-email/send", methods=["POST"])
+def api_calendar_send():
+    """Send an email from the calendar-email view."""
+    data = request.json
+    to = data.get("to", "")
+    subject = data.get("subject", "")
+    body = data.get("body", "")
+    thread_id = data.get("threadId")
+    try:
+        result = gmail_client.send_email(to, subject, body, thread_id=thread_id)
+        _invalidate_cache()
+        return jsonify({"status": "sent", "id": result.get("id")})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/profile")
+def api_profile():
+    """Return the authenticated user's email address."""
+    try:
+        email = gmail_client.get_profile()
+        return jsonify({"email": email})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    """Clear local OAuth token so next request requires re-authentication."""
+    try:
+        if os.path.exists(TOKEN_FILE):
+            os.remove(TOKEN_FILE)
+    except OSError:
+        # Even if deletion fails, clear server-side volatile state.
+        pass
+
+    _invalidate_cache()
+    harvard_ai_client.clear_response_cache()
+    session.clear()
+    return jsonify({"status": "ok"})
+
+
+# ────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    # Trigger OAuth on startup so the user authenticates once
+    print("🔐  Authenticating with Google…")
+    try:
+        email = gmail_client.get_profile()
+        print(f"✅  Logged in as {email}")
+    except FileNotFoundError as e:
+        print(f"⚠️  {e}")
+        print("   Place your credentials.json in this directory and restart.")
+    except Exception as e:
+        print(f"⚠️  Auth error: {e}")
+
+    print("🚀  Starting CSO Email Prototypes on http://127.0.0.1:5001")
+    app.run(debug=True, port=5001)
