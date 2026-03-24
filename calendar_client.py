@@ -8,10 +8,27 @@ from googleapiclient.discovery import build
 
 from gmail_client import get_credentials
 
+_cached_user_tz: str | None = None
+
 
 def get_calendar_service():
     """Build and return a Calendar API service instance."""
     return build("calendar", "v3", credentials=get_credentials())
+
+
+def get_user_timezone() -> str:
+    """Return the authenticated user's calendar timezone (e.g. 'America/New_York').
+    Falls back to UTC if the setting cannot be read."""
+    global _cached_user_tz
+    if _cached_user_tz:
+        return _cached_user_tz
+    try:
+        service = get_calendar_service()
+        setting = service.settings().get(setting="timezone").execute()
+        _cached_user_tz = setting.get("value") or "UTC"
+    except Exception:
+        _cached_user_tz = "UTC"
+    return _cached_user_tz
 
 
 def get_freebusy(email, days_ahead=7):
@@ -29,7 +46,7 @@ def get_freebusy(email, days_ahead=7):
     body = {
         "timeMin": time_min,
         "timeMax": time_max,
-        "timeZone": "America/New_York",
+        "timeZone": get_user_timezone(),
         "items": [{"id": email}],
     }
 
@@ -78,31 +95,32 @@ def get_my_events(days_ahead=7, max_results=50):
 def compute_availability(email, days_ahead=7):
     """
     High-level helper: return a day-by-day availability summary for a contact.
-    Each day has a list of free/busy blocks for the full 24-hour period (ET).
+    Each day has a list of free/busy blocks for the full 24-hour period in the user's local timezone.
     Returns {"accessible": bool, "days": [...]} so the UI can hide
     calendars we cannot read.
     """
     from datetime import time as dt_time
     import pytz
 
-    eastern = pytz.timezone("America/New_York")
+    user_tz = get_user_timezone()
+    local_tz = pytz.timezone(user_tz)
     fb = get_freebusy(email, days_ahead)
     busy_slots = fb["busy"]
     accessible = fb["accessible"]
 
-    now = datetime.now(eastern)
+    now = datetime.now(local_tz)
     days = []
 
     for d in range(days_ahead):
         date = (now + timedelta(days=d)).date()
-        day_start = eastern.localize(datetime.combine(date, dt_time(0, 0)))
-        day_end = eastern.localize(datetime.combine(date, dt_time(23, 59)))
+        day_start = local_tz.localize(datetime.combine(date, dt_time(0, 0)))
+        day_end = local_tz.localize(datetime.combine(date, dt_time(23, 59)))
 
         # Filter busy slots that overlap this day
         day_busy = []
         for slot in busy_slots:
-            s = datetime.fromisoformat(slot["start"].replace("Z", "+00:00")).astimezone(eastern)
-            e = datetime.fromisoformat(slot["end"].replace("Z", "+00:00")).astimezone(eastern)
+            s = datetime.fromisoformat(slot["start"].replace("Z", "+00:00")).astimezone(local_tz)
+            e = datetime.fromisoformat(slot["end"].replace("Z", "+00:00")).astimezone(local_tz)
             if e > day_start and s < day_end:
                 clamped_start = max(s, day_start)
                 clamped_end = min(e, day_end)

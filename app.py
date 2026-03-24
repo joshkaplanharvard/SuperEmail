@@ -6,9 +6,12 @@ Two alternative email interfaces built on top of Gmail:
   Prototype B – Calendar Email:  click a sender → see their live availability
 """
 import json
+import logging
 import os
 import re
+import threading
 import time
+from collections import deque
 from flask import (
     Flask,
     jsonify,
@@ -27,25 +30,60 @@ import harvard_ai_client
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("cso")
+
 # ── Simple in-memory email cache (avoids re-fetching on view switch) ────
 _email_cache = {}          # key = (query, max_results) -> {"emails": [...], "ts": float}
+_email_cache_lock = threading.Lock()
 _CACHE_TTL = 120           # seconds
+
+# ── Per-endpoint AI rate limiting (max calls per window) ─────────────────
+_AI_RATE_LIMIT = 20        # max calls
+_AI_RATE_WINDOW = 60       # seconds
+_ai_call_times: deque = deque()
+_ai_rate_lock = threading.Lock()
+
+_EMAIL_RE = re.compile(r'^[\w.+-]+@[\w.-]+\.\w+$')
 
 
 def _get_cached_emails(query="in:inbox", max_results=40):
     """Return emails from cache if fresh, otherwise fetch and cache."""
     key = (query, max_results)
-    cached = _email_cache.get(key)
-    if cached and (time.time() - cached["ts"]) < _CACHE_TTL:
-        return cached["emails"]
+    with _email_cache_lock:
+        cached = _email_cache.get(key)
+        if cached and (time.time() - cached["ts"]) < _CACHE_TTL:
+            return cached["emails"]
     emails = gmail_client.fetch_emails(max_results=max_results, query=query)
-    _email_cache[key] = {"emails": emails, "ts": time.time()}
+    with _email_cache_lock:
+        _email_cache[key] = {"emails": emails, "ts": time.time()}
     return emails
 
 
 def _invalidate_cache():
     """Clear the email cache (call after mutations like send/delete/mark)."""
-    _email_cache.clear()
+    with _email_cache_lock:
+        _email_cache.clear()
+
+
+def _check_ai_rate_limit():
+    """Return True if the AI call is allowed, False if rate limit exceeded."""
+    now = time.time()
+    with _ai_rate_lock:
+        while _ai_call_times and now - _ai_call_times[0] > _AI_RATE_WINDOW:
+            _ai_call_times.popleft()
+        if len(_ai_call_times) >= _AI_RATE_LIMIT:
+            return False
+        _ai_call_times.append(now)
+        return True
+
+
+def _validate_email(address):
+    """Return True if address looks like a valid email."""
+    return bool(_EMAIL_RE.match((address or "").strip()))
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -81,6 +119,9 @@ def api_triage_score():
     """Return optional AI urgency scoring for triage board threads."""
     if not harvard_ai_client.is_enabled():
         return jsonify({"enabled": False, "results": [], "error": "HARVARD_OPENAI_API_KEY is not configured"})
+    if not _check_ai_rate_limit():
+        log.warning("AI rate limit exceeded on /api/triage/score")
+        return jsonify({"enabled": True, "results": [], "error": "Rate limit exceeded. Try again shortly."}), 429
 
     payload = request.json or {}
     threads = payload.get("threads", [])
@@ -92,6 +133,7 @@ def api_triage_score():
 
     try:
         scored = harvard_ai_client.score_threads(threads, include_usage=True)
+        log.info("Triage scored %d threads (cached=%s)", len(threads), scored.get("cached", False))
         return jsonify({
             "enabled": True,
             "results": scored.get("results", []),
@@ -101,6 +143,7 @@ def api_triage_score():
             "cached": scored.get("cached", False),
         })
     except Exception as e:
+        log.error("Triage score failed: %s", e)
         return jsonify({"enabled": True, "results": [], "error": str(e)}), 502
 
 
@@ -188,6 +231,22 @@ def _extract_json_object(text):
         return {}
 
 
+def _friendly_google_error(exc):
+    """Convert a Google API or network exception to a readable message."""
+    msg = str(exc)
+    if "quota" in msg.lower() or "rateLimitExceeded" in msg:
+        return "Google API quota exceeded. Please wait a moment and try again."
+    if "invalid_grant" in msg or "Token has been expired" in msg:
+        return "Your Google session has expired. Please log out and reconnect."
+    if "HttpError 403" in msg or "insufficientPermissions" in msg:
+        return "Insufficient Google permissions. Check your OAuth scopes."
+    if "HttpError 404" in msg:
+        return "Resource not found in Gmail."
+    if "HttpError 5" in msg:
+        return "Google API returned a server error. Try again shortly."
+    return msg
+
+
 def _coerce_bool(value):
     if isinstance(value, bool):
         return value
@@ -204,7 +263,7 @@ def _coerce_bool(value):
 
 @app.route("/api/scheduling-assist/intent", methods=["POST"])
 def api_scheduling_assist_intent():
-    """Classify whether an email is scheduling-related using Harvard AI only."""
+    """Classify whether an email is scheduling-related; AI preferred, heuristic fallback."""
     data = request.json or {}
     email = data.get("email") or {}
     if not isinstance(email, dict):
@@ -224,12 +283,23 @@ def api_scheduling_assist_intent():
     heuristic_is_scheduling = any(word in text for word in heuristic_words)
 
     if not harvard_ai_client.is_enabled():
+        log.info("Intent: AI not configured, using heuristic (result=%s)", heuristic_is_scheduling)
         return jsonify({
             "enabled": False,
             "isScheduling": heuristic_is_scheduling,
             "confidence": "medium" if heuristic_is_scheduling else "low",
             "source": "heuristic",
             "reason": "AI not configured; classified by keyword matching.",
+        })
+
+    if not _check_ai_rate_limit():
+        log.warning("AI rate limit exceeded on /api/scheduling-assist/intent")
+        return jsonify({
+            "enabled": True,
+            "isScheduling": heuristic_is_scheduling,
+            "confidence": "medium" if heuristic_is_scheduling else "low",
+            "source": "heuristic",
+            "reason": "Rate limit reached; classified by keyword matching.",
         })
 
     system_prompt = (
@@ -264,6 +334,7 @@ def api_scheduling_assist_intent():
         if not reason:
             reason = "Classified from subject/snippet/body content."
 
+        log.info("Intent: AI result isScheduling=%s confidence=%s cached=%s", is_scheduling, confidence, result.get("cached", False))
         return jsonify({
             "enabled": True,
             "isScheduling": is_scheduling,
@@ -274,7 +345,8 @@ def api_scheduling_assist_intent():
             "usage": result.get("usage"),
             "cached": result.get("cached", False),
         })
-    except Exception:
+    except Exception as e:
+        log.error("Intent AI call failed, falling back to heuristic: %s", e)
         return jsonify({
             "enabled": True,
             "isScheduling": heuristic_is_scheduling,
@@ -302,6 +374,9 @@ def api_bulletin_emails():
         emails = _get_cached_emails(query=query, max_results=max_results)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        log.error("Bulletin fetch failed: %s", e)
+        return jsonify({"error": _friendly_google_error(e)}), 500
 
     # Group by thread so each thread becomes one "card"
     threads = {}
@@ -350,26 +425,30 @@ def api_bulletin_thread(thread_id):
 @app.route("/api/bulletin/send", methods=["POST"])
 def api_bulletin_send():
     """Post a new 'note' (email) to the bulletin board / thread."""
-    data = request.json
-    to = data.get("to", "")
+    data = request.json or {}
+    to = (data.get("to") or "").strip()
     subject = data.get("subject", "")
     body = data.get("body", "")
     thread_id = data.get("threadId")
+    if not _validate_email(to):
+        return jsonify({"error": f"Invalid recipient address: {to!r}"}), 400
     try:
         result = gmail_client.send_email(to, subject, body, thread_id=thread_id)
         _invalidate_cache()
+        log.info("Bulletin send to=%s subject=%r thread=%s", to, subject, thread_id)
         return jsonify({"status": "sent", "id": result.get("id")})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        log.error("Bulletin send failed: %s", e)
+        return jsonify({"error": _friendly_google_error(e)}), 500
 
 
-_EMAIL_RE = re.compile(r'[\w.+-]+@[\w.-]+\.\w+')
+_ADDR_RE = re.compile(r'[\w.+-]+@[\w.-]+\.\w+')
 
 def _extract_addresses(header_value):
     """Extract email addresses from a To/Cc header string."""
     if not header_value:
         return []
-    return _EMAIL_RE.findall(header_value)
+    return _ADDR_RE.findall(header_value)
 
 
 def _auto_category(email):
@@ -464,6 +543,9 @@ def api_calendar_emails():
         return jsonify(emails)
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        log.error("Calendar email fetch failed: %s", e)
+        return jsonify({"error": _friendly_google_error(e)}), 500
 
 
 @app.route("/api/calendar-email/contacts")
@@ -513,17 +595,21 @@ def api_my_events():
 @app.route("/api/calendar-email/send", methods=["POST"])
 def api_calendar_send():
     """Send an email from the calendar-email view."""
-    data = request.json
-    to = data.get("to", "")
+    data = request.json or {}
+    to = (data.get("to") or "").strip()
     subject = data.get("subject", "")
     body = data.get("body", "")
     thread_id = data.get("threadId")
+    if not _validate_email(to):
+        return jsonify({"error": f"Invalid recipient address: {to!r}"}), 400
     try:
         result = gmail_client.send_email(to, subject, body, thread_id=thread_id)
         _invalidate_cache()
+        log.info("Calendar send to=%s subject=%r thread=%s", to, subject, thread_id)
         return jsonify({"status": "sent", "id": result.get("id")})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        log.error("Calendar send failed: %s", e)
+        return jsonify({"error": _friendly_google_error(e)}), 500
 
 
 @app.route("/api/profile")
@@ -566,4 +652,4 @@ if __name__ == "__main__":
         print(f"⚠️  Auth error: {e}")
 
     print("🚀  Starting CSO Email Prototypes on http://127.0.0.1:5001")
-    app.run(debug=True, port=5001)
+    app.run(debug=False, port=5001)
