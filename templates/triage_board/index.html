@@ -12,14 +12,6 @@
         <div class="tb-toolbar-actions">
             <input type="text" id="tb-search" class="v2-input tb-search" placeholder="Search…" oninput="tbFilterEmails()">
 
-            <div class="tb-filter-chips" id="tb-filter-chips">
-                <button class="v2-btn v2-btn-sm v2-btn-secondary tb-chip active" data-filter="all" onclick="tbSetTagFilter('all')">All</button>
-                <button class="v2-btn v2-btn-sm v2-btn-ghost tb-chip" data-filter="Scheduling" onclick="tbSetTagFilter('Scheduling')">📅 Scheduling</button>
-                <button class="v2-btn v2-btn-sm v2-btn-ghost tb-chip" data-filter="Question" onclick="tbSetTagFilter('Question')">❓ Question</button>
-                <button class="v2-btn v2-btn-sm v2-btn-ghost tb-chip" data-filter="Direct" onclick="tbSetTagFilter('Direct')">👤 Direct</button>
-                <button class="v2-btn v2-btn-sm v2-btn-ghost tb-chip" data-filter="Work" onclick="tbSetTagFilter('Work')">💼 Work</button>
-            </div>
-
             <label class="v2-toggle tb-toggle-ml">
                 <input type="checkbox" id="tb-hide-ml" onchange="tbFilterEmails()">
                 <span class="v2-toggle-track"></span>

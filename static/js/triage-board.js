@@ -232,17 +232,6 @@ function tbCreateRow(thread, currentBucket) {
     const stars = Math.max(1, Math.min(3, Number(thread.urgencyStars || 1)));
     const urgLevel = stars >= 3 ? 'high' : stars === 2 ? 'medium' : 'low';
 
-    // Tags
-    const tagsHtml = thread.tags.map(tag => {
-        let cls = 'v2-badge-default';
-        if (tag === 'Scheduling') cls = 'v2-badge-primary';
-        else if (tag === 'Question') cls = 'v2-badge-warning';
-        else if (tag === 'Direct') cls = 'v2-badge-success';
-        else if (tag === 'Mailing list') cls = 'v2-badge-default';
-        else if (tag === 'Work') cls = 'v2-badge-purple';
-        return `<span class="v2-badge ${cls}">${escHtml(tag)}</span>`;
-    }).join('');
-
     // Move buttons (show other 2 buckets)
     const moveOptions = TB_BUCKETS.filter(b => b !== currentBucket);
     const moveBtns = moveOptions.map(b => {
@@ -267,7 +256,6 @@ function tbCreateRow(thread, currentBucket) {
             </div>
             <div class="tb-email-subject">${escHtml(thread.subject)}</div>
             <div class="tb-email-snippet">${escHtml(thread.snippet)}</div>
-            <div class="tb-email-tags">${tagsHtml}</div>
         </div>
         <div class="tb-email-actions">${moveBtns}</div>`;
 
@@ -311,8 +299,6 @@ function tbOpenDetail(thread) {
         <div class="tb-modal-meta">
             <div class="v2-avatar v2-avatar-sm" style="background:${strToColor(sender?.email)}">${(sender?.name || sender?.email || '?')[0].toUpperCase()}</div>
             <span>${escHtml(sender?.name || sender?.email)}</span>
-            <span>•</span>
-            <span>${thread.tags.map(t => `<span class="v2-badge v2-badge-default">${escHtml(t)}</span>`).join(' ')}</span>
         </div>
         <div class="tb-modal-actions">
             <button class="v2-btn v2-btn-sm v2-btn-secondary" onclick="tbMarkUnread()">Mark Unread</button>
