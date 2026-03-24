@@ -57,9 +57,12 @@ def _get_cached_emails(query="in:inbox", max_results=40):
         cached = _email_cache.get(key)
         if cached and (time.time() - cached["ts"]) < _CACHE_TTL:
             return cached["emails"]
-    emails = gmail_client.fetch_emails(max_results=max_results, query=query)
+    result = gmail_client.fetch_emails(max_results=max_results, query=query)
+    # fetch_emails now returns {"emails": [...], "next_page_token": ...}
+    emails = result["emails"]
+    next_page_token = result.get("next_page_token")
     with _email_cache_lock:
-        _email_cache[key] = {"emails": emails, "ts": time.time()}
+        _email_cache[key] = {"emails": emails, "next_page_token": next_page_token, "ts": time.time()}
     return emails
 
 
@@ -409,7 +412,13 @@ def api_bulletin_emails():
                 if entry not in threads[tid]["participants"]:
                     threads[tid]["participants"].append(entry)
 
-    return jsonify(list(threads.values()))
+    # Retrieve next_page_token from cache if available
+    key = (query, max_results)
+    with _email_cache_lock:
+        cached = _email_cache.get(key)
+        next_page_token = cached.get("next_page_token") if cached else None
+
+    return jsonify({"threads": list(threads.values()), "nextPageToken": next_page_token})
 
 
 @app.route("/api/bulletin/thread/<thread_id>")
@@ -524,6 +533,52 @@ def api_delete_email():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/email/star", methods=["POST"])
+def api_star_email():
+    """Add STARRED label to a message."""
+    data = request.json or {}
+    message_id = data.get("messageId")
+    if not message_id:
+        return jsonify({"error": "messageId is required"}), 400
+    try:
+        gmail_client.star_message(message_id)
+        _invalidate_cache()
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/email/unstar", methods=["POST"])
+def api_unstar_email():
+    """Remove STARRED label from a message."""
+    data = request.json or {}
+    message_id = data.get("messageId")
+    if not message_id:
+        return jsonify({"error": "messageId is required"}), 400
+    try:
+        gmail_client.unstar_message(message_id)
+        _invalidate_cache()
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/emails/more")
+def api_emails_more():
+    """Load more emails bypassing cache. Accepts q, max, pageToken query params."""
+    query = request.args.get("q", "in:inbox")
+    max_results = int(request.args.get("max", 40))
+    page_token = request.args.get("pageToken") or None
+    try:
+        result = gmail_client.fetch_emails(max_results=max_results, query=query, page_token=page_token)
+        return jsonify({"emails": result["emails"], "nextPageToken": result.get("next_page_token")})
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        log.error("Load more emails failed: %s", e)
+        return jsonify({"error": _friendly_google_error(e)}), 500
+
+
 # ════════════════════════════════════════════════════════════════════
 # PROTOTYPE B  –  Calendar-Integrated Email
 # ════════════════════════════════════════════════════════════════════
@@ -540,7 +595,11 @@ def api_calendar_emails():
     max_results = int(request.args.get("max", 40))
     try:
         emails = _get_cached_emails(query=query, max_results=max_results)
-        return jsonify(emails)
+        key = (query, max_results)
+        with _email_cache_lock:
+            cached = _email_cache.get(key)
+            next_page_token = cached.get("next_page_token") if cached else None
+        return jsonify({"emails": emails, "nextPageToken": next_page_token})
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 500
     except Exception as e:

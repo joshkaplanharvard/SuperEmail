@@ -9,6 +9,9 @@ let tbFiltered = [];
 let tbBucketOverrides = {};  // threadId -> bucket override from user moves
 let tbActiveTag = 'all';
 let tbCurrentThread = null;
+let tbNextPageToken = null;
+let tbCurrentQuery = '';
+let tbReplyMode = 'reply'; // 'reply' | 'reply-all'
 
 const TB_BUCKETS = ['reply', 'schedule', 'fyi'];
 const TB_BUCKET_META = {
@@ -17,41 +20,106 @@ const TB_BUCKET_META = {
     fyi: { title: 'FYI / No Action', order: 2 },
 };
 
-// Heuristic keyword fallbacks are intentionally disabled in AI-only mode.
-// const SCHEDULING_KW = ['meet', 'meeting', 'schedule', 'calendar', 'availability', 'available', 'free', 'slot', 'time', 'zoom', 'call', 'sync', 'office hours', 'book', 'reschedule', 'coffee', 'lunch'];
-// const QUESTION_KW = ['?', 'question', 'help', 'how do', 'can you', 'could you', 'would you', 'please', 'wondering', 'thoughts on'];
-// const URGENCY_KW = ['asap', 'urgent', 'by tomorrow', 'deadline', 'due', 'eod', 'end of day', 'today', 'immediately', 'critical', 'time-sensitive'];
+const TB_EMPTY_STATES = {
+    reply: '✓ All caught up',
+    schedule: '📅 Nothing to schedule',
+    fyi: '📋 Nothing to review',
+};
 
 // ── Boot ────────────────────────────────────────────────────────
 tbLoadEmails();
 
 document.getElementById('tb-search').addEventListener('keydown', e => {
-    if (e.key === 'Enter') tbFilterEmails();
+    if (e.key === 'Enter') tbLoadEmails(document.getElementById('tb-search').value.trim());
 });
 document.getElementById('tb-detail-modal').addEventListener('click', e => {
     if (e.target === document.getElementById('tb-detail-modal')) tbCloseDetail();
 });
 
+// ── Auto-refresh every 60 seconds ───────────────────────────────
+setInterval(() => {
+    const q = tbCurrentQuery || 'in:inbox';
+    fetch(`/api/bulletin/emails?q=${encodeURIComponent(q)}&max=50`)
+        .then(r => r.json())
+        .then(data => {
+            const newThreads = data.threads || data || [];
+            if (newThreads.error) return;
+            const existingIds = new Set(tbAllThreads.map(t => t.threadId));
+            const freshIds = new Set(newThreads.map(t => t.threadId));
+            const newCount = [...freshIds].filter(id => !existingIds.has(id)).length;
+            if (newCount > 0) {
+                const banner = document.getElementById('tb-new-banner');
+                const countEl = document.getElementById('tb-new-count');
+                if (banner && countEl) {
+                    countEl.textContent = newCount;
+                    banner.classList.add('visible');
+                }
+            }
+        })
+        .catch(() => {});
+}, 60000);
+
+// ── Toast helper ────────────────────────────────────────────────
+function showToast(message, type = 'default') {
+    let container = document.getElementById('v2-toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'v2-toast-container';
+        document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = 'v2-toast' + (type !== 'default' ? ' ' + type : '');
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.remove();
+    }, 3000);
+}
+
+// ── Skeleton rows helper ─────────────────────────────────────────
+function tbSkeletonRows(n) {
+    return Array.from({ length: n }, () => `
+        <div class="skeleton-row">
+            <div class="skeleton-avatar"></div>
+            <div class="skeleton-lines">
+                <div class="skeleton-line medium"></div>
+                <div class="skeleton-line short"></div>
+                <div class="skeleton-line full"></div>
+            </div>
+        </div>
+    `).join('');
+}
+
 // ── Load real email data ────────────────────────────────────────
-function tbLoadEmails() {
+function tbLoadEmails(query) {
+    tbCurrentQuery = (query !== undefined ? query : (document.getElementById('tb-search').value || '')).trim();
+
+    // Hide new-email banner
+    const banner = document.getElementById('tb-new-banner');
+    if (banner) banner.classList.remove('visible');
+
     tbSetAiStatus('Waiting for AI scoring...');
 
     TB_BUCKETS.forEach(b => {
-        document.getElementById(`tb-body-${b}`).innerHTML = '<div class="v2-loading"><div class="v2-spinner"></div></div>';
+        document.getElementById(`tb-body-${b}`).innerHTML = tbSkeletonRows(6);
     });
 
-    fetch('/api/bulletin/emails?q=in%3Ainbox&max=50')
+    const q = tbCurrentQuery || 'in:inbox';
+    fetch(`/api/bulletin/emails?q=${encodeURIComponent(q)}&max=50`)
         .then(r => r.json())
-        .then(threads => {
-            if (threads.error) {
+        .then(data => {
+            if (data.error) {
                 TB_BUCKETS.forEach(b => {
-                    document.getElementById(`tb-body-${b}`).innerHTML = `<div class="tb-empty">⚠ ${escHtml(threads.error)}</div>`;
+                    document.getElementById(`tb-body-${b}`).innerHTML = `<div class="tb-empty">⚠ ${escHtml(data.error)}</div>`;
                 });
                 return;
             }
+            const threads = data.threads || data || [];
+            tbNextPageToken = data.nextPageToken || null;
             tbAllThreads = threads.map(t => enrichThread(t));
             tbFilterEmails();
             tbApplyAiScores();
+            tbUpdateLoadMore();
         })
         .catch(err => {
             TB_BUCKETS.forEach(b => {
@@ -61,21 +129,69 @@ function tbLoadEmails() {
         });
 }
 
+// ── Load more ────────────────────────────────────────────────────
+function tbUpdateLoadMore() {
+    let loadMoreArea = document.getElementById('tb-load-more-area');
+    if (!loadMoreArea) {
+        loadMoreArea = document.createElement('div');
+        loadMoreArea.id = 'tb-load-more-area';
+        loadMoreArea.style.padding = '8px 16px';
+        const columns = document.querySelector('.tb-columns');
+        if (columns) columns.parentNode.insertBefore(loadMoreArea, columns.nextSibling);
+    }
+    if (tbNextPageToken) {
+        loadMoreArea.innerHTML = `<button class="v2-load-more" onclick="tbLoadMore()">Load more emails</button>`;
+    } else {
+        loadMoreArea.innerHTML = '';
+    }
+}
+
+function tbLoadMore() {
+    if (!tbNextPageToken) return;
+    const q = tbCurrentQuery || 'in:inbox';
+    fetch(`/api/emails/more?q=${encodeURIComponent(q)}&max=40&pageToken=${encodeURIComponent(tbNextPageToken)}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { showToast('Error loading more: ' + data.error, 'error'); return; }
+            tbNextPageToken = data.nextPageToken || null;
+            const newEmails = data.emails || [];
+            // Convert flat emails to thread-like objects and append
+            const newThreads = newEmails.map(e => enrichThread({
+                threadId: e.threadId,
+                subject: e.subject,
+                participants: [{ name: e.from_name, email: e.from_email }],
+                snippet: e.snippet,
+                messages: [e],
+                latest_date: e.date,
+                labels: e.labels,
+                hasAttachments: e.hasAttachments,
+                isUnread: (e.labels || []).includes('UNREAD'),
+                category: '',
+            }));
+            tbAllThreads = [...tbAllThreads, ...newThreads];
+            tbFilterEmails();
+            tbUpdateLoadMore();
+        })
+        .catch(err => showToast('Error: ' + err.message, 'error'));
+}
+
 // ── Enrich thread with tags + urgency + bucket ──────────────────
 function enrichThread(thread) {
     const fromEmail = (thread.participants?.[0]?.email || '').toLowerCase();
 
-    // AI sets Mailing list vs Direct, so start with a neutral direct default.
     const tags = ['Direct'];
 
-    // Detect work-related context from sender/domain and common org terms.
     const text = ((thread.subject || '') + ' ' + (thread.snippet || '')).toLowerCase();
     if (['edu', 'org'].some(tld => fromEmail.endsWith('.' + tld)) ||
         ['professor', 'prof', 'class', 'assignment', 'grade', 'office', 'ta '].some(w => text.includes(w))) {
         tags.push('Work');
     }
 
-    // AI-only mode: thread starts neutral until AI score arrives.
+    // Preserve STARRED label from any message in thread
+    const isStarred = (thread.labels || []).includes('STARRED') ||
+        (thread.messages || []).some(m => (m.labels || []).includes('STARRED'));
+    if (isStarred && !tags.includes('STARRED')) tags.push('STARRED');
+
     const urgencyStars = 1;
     const bucket = tbBucketOverrides[thread.threadId] || 'fyi';
 
@@ -133,6 +249,8 @@ function tbApplyAiScores() {
                     tags.unshift('Scheduling');
                 }
                 tags.unshift(scored.isMailingList ? 'Mailing list' : 'Direct');
+                // preserve STARRED tag
+                if (t.tags.includes('STARRED') && !tags.includes('STARRED')) tags.push('STARRED');
                 return {
                     ...t,
                     urgencyStars: scored.urgencyStars || 1,
@@ -164,20 +282,18 @@ function tbFilterEmails() {
     const hideMl = document.getElementById('tb-hide-ml').checked;
 
     tbFiltered = tbAllThreads.filter(t => {
-        // Search filter
         if (query) {
             const haystack = ((t.subject || '') + ' ' + (t.snippet || '') + ' ' +
                 (t.participants || []).map(p => (p.name || '') + ' ' + (p.email || '')).join(' ')).toLowerCase();
             if (!haystack.includes(query)) return false;
         }
-        // Hide mailing lists
         if (hideMl && t.tags.includes('Mailing list')) return false;
-        // Tag filter
         if (tbActiveTag !== 'all' && !t.tags.includes(tbActiveTag)) return false;
         return true;
     });
 
     tbRenderBoard();
+    tbUpdateTabTitle();
 }
 
 function tbSetTagFilter(tag) {
@@ -190,6 +306,11 @@ function tbSetTagFilter(tag) {
     tbFilterEmails();
 }
 
+function tbUpdateTabTitle() {
+    const unread = tbAllThreads.filter(t => t.isUnread).length;
+    document.title = unread > 0 ? `(${unread}) Triage Board` : 'Triage Board';
+}
+
 function tbRenderBoard() {
     const buckets = { reply: [], schedule: [], fyi: [] };
 
@@ -198,7 +319,6 @@ function tbRenderBoard() {
         if (buckets[b]) buckets[b].push(t);
     });
 
-    // Sort each bucket by urgency descending (stable)
     Object.keys(buckets).forEach(b => {
         buckets[b].sort((a, bx) => (bx.urgencyStars || 1) - (a.urgencyStars || 1));
     });
@@ -209,7 +329,7 @@ function tbRenderBoard() {
         count.textContent = buckets[b].length;
 
         if (buckets[b].length === 0) {
-            body.innerHTML = '<div class="tb-empty">No emails here</div>';
+            body.innerHTML = `<div class="tb-empty">${TB_EMPTY_STATES[b] || 'No emails here'}</div>`;
             return;
         }
 
@@ -224,6 +344,7 @@ function tbRenderBoard() {
 function tbCreateRow(thread, currentBucket) {
     const row = document.createElement('div');
     row.className = 'tb-email-row' + (thread.isUnread ? ' unread' : '');
+    row.dataset.threadId = thread.threadId;
 
     const sender = thread.participants?.[0];
     const initial = (sender?.name || sender?.email || '?')[0].toUpperCase();
@@ -232,7 +353,6 @@ function tbCreateRow(thread, currentBucket) {
     const stars = Math.max(1, Math.min(3, Number(thread.urgencyStars || 1)));
     const urgLevel = stars >= 3 ? 'high' : stars === 2 ? 'medium' : 'low';
 
-    // Move buttons (show other 2 buckets)
     const moveOptions = TB_BUCKETS.filter(b => b !== currentBucket);
     const moveBtns = moveOptions.map(b => {
         const direction = TB_BUCKET_META[b].order < TB_BUCKET_META[currentBucket].order ? '←' : '→';
@@ -244,7 +364,12 @@ function tbCreateRow(thread, currentBucket) {
         ? `AI urgency: ${stars} star${stars > 1 ? 's' : ''}${thread.aiReasons?.length ? ' - ' + thread.aiReasons.join('; ') : ''}`
         : 'AI urgency pending';
 
+    const isStarred = (thread.tags || []).includes('STARRED');
+    const email = thread.messages?.[0] || {};
+    const attachIcon = thread.hasAttachments ? '<span class="v2-attach-icon">📎</span>' : '';
+
     row.innerHTML = `
+        <button class="v2-star-btn ${isStarred ? 'starred' : ''}" onclick="event.stopPropagation(); tbToggleStar('${escHtml(thread.threadId)}', '${escHtml(email.id || '')}')">★</button>
         <div class="v2-avatar v2-avatar-sm" style="background:${color};margin-top:2px;">${initial}</div>
         <div class="tb-email-main">
             <div class="tb-email-top-row">
@@ -253,6 +378,7 @@ function tbCreateRow(thread, currentBucket) {
                 <span class="tb-urgency-score ${urgLevel}" title="${escHtml(urgencyHint)}">
                     ${stars === 3 ? '★★★' : stars === 2 ? '★★' : '★'}
                 </span>
+                ${attachIcon}
             </div>
             <div class="tb-email-subject">${escHtml(thread.subject)}</div>
             <div class="tb-email-snippet">${escHtml(thread.snippet)}</div>
@@ -263,24 +389,78 @@ function tbCreateRow(thread, currentBucket) {
     return row;
 }
 
+// ── Star / unstar ────────────────────────────────────────────────
+function tbToggleStar(threadId, messageId) {
+    const thread = tbAllThreads.find(t => t.threadId === threadId);
+    if (!thread) return;
+
+    const isStarred = (thread.tags || []).includes('STARRED');
+    const endpoint = isStarred ? '/api/email/unstar' : '/api/email/star';
+
+    // Optimistic update
+    if (isStarred) {
+        thread.tags = thread.tags.filter(t => t !== 'STARRED');
+    } else {
+        thread.tags = [...(thread.tags || []), 'STARRED'];
+    }
+    tbRenderBoard();
+
+    const mid = messageId || (thread.messages?.[0]?.id);
+    if (!mid) return;
+
+    fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: mid }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            // Revert optimistic update
+            if (isStarred) {
+                thread.tags = [...(thread.tags || []), 'STARRED'];
+            } else {
+                thread.tags = thread.tags.filter(t => t !== 'STARRED');
+            }
+            tbRenderBoard();
+            showToast('Error: ' + data.error, 'error');
+        } else {
+            showToast(isStarred ? 'Unstarred' : 'Starred');
+        }
+    })
+    .catch(err => {
+        showToast('Error: ' + err.message, 'error');
+    });
+}
+
 // ── Move thread between buckets ─────────────────────────────────
 function tbMoveThread(threadId, newBucket) {
     tbBucketOverrides[threadId] = newBucket;
-    // Re-enrich and re-render
-    tbAllThreads = tbAllThreads.map(t => {
-        if (t.threadId === threadId) {
-            return { ...t, bucket: newBucket };
-        }
-        return t;
-    });
-    tbFilterEmails();
+
+    // Animate the row out (optimistic)
+    const row = document.querySelector(`.tb-email-row[data-thread-id="${threadId}"]`);
+    if (row) {
+        row.style.opacity = '0';
+        row.style.transform = 'translateX(8px)';
+        row.style.transition = 'all 0.15s ease';
+    }
+
+    setTimeout(() => {
+        tbAllThreads = tbAllThreads.map(t => {
+            if (t.threadId === threadId) {
+                return { ...t, bucket: newBucket };
+            }
+            return t;
+        });
+        tbFilterEmails();
+    }, 150);
 }
 
 // ── Email detail modal ──────────────────────────────────────────
 function tbOpenDetail(thread) {
     tbCurrentThread = thread;
+    tbReplyMode = 'reply';
 
-    // Mark as read
     if (thread.isUnread) {
         fetch('/api/email/mark-read', {
             method: 'POST',
@@ -289,6 +469,7 @@ function tbOpenDetail(thread) {
         }).catch(() => {});
         thread.isUnread = false;
         tbRenderBoard();
+        tbUpdateTabTitle();
     }
 
     const sender = thread.participants?.[0];
@@ -308,6 +489,10 @@ function tbOpenDetail(thread) {
             <div class="v2-loading"><div class="v2-spinner"></div><span>Loading…</span></div>
         </div>
         <div class="tb-modal-reply">
+            <div style="display:flex;gap:6px;margin-bottom:8px;">
+                <button class="v2-btn v2-btn-sm ${tbReplyMode === 'reply' ? 'v2-btn-secondary' : 'v2-btn-ghost'}" id="tb-reply-btn" onclick="tbSetReplyMode('reply')">Reply</button>
+                <button class="v2-btn v2-btn-sm ${tbReplyMode === 'reply-all' ? 'v2-btn-secondary' : 'v2-btn-ghost'}" id="tb-reply-all-btn" onclick="tbSetReplyMode('reply-all')">Reply All</button>
+            </div>
             <textarea id="tb-reply-text" class="v2-textarea" rows="3" placeholder="Write a reply…"></textarea>
             <div style="display:flex;gap:6px;justify-content:flex-end;">
                 <button class="v2-btn v2-btn-primary v2-btn-sm" onclick="tbSendReply()">Send Reply</button>
@@ -316,7 +501,6 @@ function tbOpenDetail(thread) {
 
     document.getElementById('tb-detail-modal').style.display = 'flex';
 
-    // Fetch full thread
     fetch(`/api/bulletin/thread/${thread.threadId}`)
         .then(r => r.json())
         .then(messages => {
@@ -325,6 +509,7 @@ function tbOpenDetail(thread) {
                     <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
                         <div class="v2-avatar v2-avatar-sm" style="background:${strToColor(msg.from_email)}">${(msg.from_name || msg.from_email)[0].toUpperCase()}</div>
                         <span style="font-weight:500;font-size:13px;">${escHtml(msg.from_name || msg.from_email)}</span>
+                        ${msg.hasAttachments ? '<span class="v2-attach-icon">📎</span>' : ''}
                     </div>
                     <div style="font-size:13px;line-height:1.6;white-space:pre-wrap;color:var(--text-secondary);">${escHtml(msg.body || msg.snippet)}</div>
                 </div>
@@ -333,6 +518,18 @@ function tbOpenDetail(thread) {
         .catch(err => {
             document.getElementById('tb-modal-body').innerHTML = `<div style="color:var(--danger);">Error: ${escHtml(err.message)}</div>`;
         });
+}
+
+function tbSetReplyMode(mode) {
+    tbReplyMode = mode;
+    const replyBtn = document.getElementById('tb-reply-btn');
+    const replyAllBtn = document.getElementById('tb-reply-all-btn');
+    if (replyBtn) {
+        replyBtn.className = `v2-btn v2-btn-sm ${mode === 'reply' ? 'v2-btn-secondary' : 'v2-btn-ghost'}`;
+    }
+    if (replyAllBtn) {
+        replyAllBtn.className = `v2-btn v2-btn-sm ${mode === 'reply-all' ? 'v2-btn-secondary' : 'v2-btn-ghost'}`;
+    }
 }
 
 function tbCloseDetail() {
@@ -349,12 +546,13 @@ function tbMarkUnread() {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.error) { alert('Error: ' + data.error); return; }
+        if (data.error) { showToast('Error: ' + data.error, 'error'); return; }
         tbCurrentThread.isUnread = true;
         tbCloseDetail();
         tbRenderBoard();
+        tbUpdateTabTitle();
     })
-    .catch(err => alert('Error: ' + err.message));
+    .catch(err => showToast('Error: ' + err.message, 'error'));
 }
 
 function tbDeleteThread() {
@@ -367,12 +565,13 @@ function tbDeleteThread() {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.error) { alert('Error: ' + data.error); return; }
+        if (data.error) { showToast('Error: ' + data.error, 'error'); return; }
         tbAllThreads = tbAllThreads.filter(t => t.threadId !== tbCurrentThread.threadId);
         tbCloseDetail();
         tbFilterEmails();
+        showToast('Conversation moved to trash');
     })
-    .catch(err => alert('Error: ' + err.message));
+    .catch(err => showToast('Error: ' + err.message, 'error'));
 }
 
 function tbSendReply() {
@@ -380,7 +579,12 @@ function tbSendReply() {
     const text = document.getElementById('tb-reply-text')?.value?.trim();
     if (!text) return;
 
-    const to = tbCurrentThread.participants?.map(p => p.email).filter(Boolean).join(', ');
+    let to;
+    if (tbReplyMode === 'reply-all') {
+        to = (tbCurrentThread.participants || []).map(p => p.email).filter(Boolean).join(', ');
+    } else {
+        to = tbCurrentThread.participants?.[0]?.email || '';
+    }
 
     fetch('/api/bulletin/send', {
         method: 'POST',
@@ -394,13 +598,49 @@ function tbSendReply() {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.error) { alert('Error: ' + data.error); return; }
+        if (data.error) { showToast('Error: ' + data.error, 'error'); return; }
         document.getElementById('tb-reply-text').value = '';
-        alert('Reply sent!');
+        showToast('Reply sent!', 'success');
         tbCloseDetail();
         tbLoadEmails();
     })
-    .catch(err => alert('Error: ' + err.message));
+    .catch(err => showToast('Error: ' + err.message, 'error'));
+}
+
+// ── Compose ──────────────────────────────────────────────────────
+function tbOpenCompose() {
+    const modal = document.getElementById('tb-compose-modal');
+    if (!modal) return;
+    document.getElementById('tb-compose-to').value = '';
+    document.getElementById('tb-compose-subject').value = '';
+    document.getElementById('tb-compose-body').value = '';
+    modal.style.display = 'flex';
+}
+
+function tbCloseCompose() {
+    const modal = document.getElementById('tb-compose-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+function tbSendCompose() {
+    const to = document.getElementById('tb-compose-to').value.trim();
+    const subject = document.getElementById('tb-compose-subject').value.trim();
+    const body = document.getElementById('tb-compose-body').value.trim();
+    if (!to || !subject || !body) { showToast('Please fill in all fields', 'error'); return; }
+
+    fetch('/api/bulletin/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, subject, body }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) { showToast('Error: ' + data.error, 'error'); return; }
+        tbCloseCompose();
+        showToast('Email sent!', 'success');
+        tbLoadEmails();
+    })
+    .catch(err => showToast('Error: ' + err.message, 'error'));
 }
 
 // ── Helpers ─────────────────────────────────────────────────────

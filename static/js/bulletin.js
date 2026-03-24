@@ -35,7 +35,9 @@ function loadEmails() {
 
     fetch(`/api/bulletin/emails?q=${query}&max=50`)
         .then(r => r.json())
-        .then(threads => {
+        .then(data => {
+            // API returns {threads: [...], nextPageToken: ...}
+            const threads = data.threads || data;
             if (threads.error) {
                 board.innerHTML = `<div class="loading-overlay"><p>⚠️ ${threads.error}</p></div>`;
                 return;

@@ -11,6 +11,8 @@ let saShowExpanded = false;
 let saPrivacyDetailed = false;
 let saCreateHolds = false;
 let saMeetingDurationMins = 30;
+let saNextPageToken = null;
+let saReplyMode = 'reply'; // 'reply' | 'reply-all'
 // Intent cache by message id so inbox/detail views stay consistent without re-requesting.
 const saIntentByEmailId = new Map();
 // Tracks in-flight intent requests by message id to avoid duplicate concurrent calls.
@@ -29,6 +31,58 @@ saLoadInbox();
 document.getElementById('sa-search').addEventListener('keydown', e => {
     if (e.key === 'Enter') saLoadInbox();
 });
+
+// ── Auto-refresh every 60 seconds ───────────────────────────────
+setInterval(() => {
+    const q = document.getElementById('sa-search').value.trim();
+    const query = q ? encodeURIComponent(q) : 'in%3Ainbox';
+    fetch(`/api/calendar-email/emails?q=${query}&max=40`)
+        .then(r => r.json())
+        .then(data => {
+            const newEmails = data.emails || data || [];
+            if (newEmails.error) return;
+            const existingIds = new Set(saAllEmails.map(e => e.id));
+            const newCount = newEmails.filter(e => !existingIds.has(e.id)).length;
+            if (newCount > 0) {
+                const banner = document.getElementById('sa-new-banner');
+                const countEl = document.getElementById('sa-new-count');
+                if (banner && countEl) {
+                    countEl.textContent = newCount;
+                    banner.classList.add('visible');
+                }
+            }
+        })
+        .catch(() => {});
+}, 60000);
+
+// ── Toast helper ─────────────────────────────────────────────────
+function showToast(message, type = 'default') {
+    let container = document.getElementById('v2-toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'v2-toast-container';
+        document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = 'v2-toast' + (type !== 'default' ? ' ' + type : '');
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+// ── Skeleton rows helper ─────────────────────────────────────────
+function saSkeletonRows(n) {
+    return Array.from({ length: n }, () => `
+        <div class="skeleton-row">
+            <div class="skeleton-avatar"></div>
+            <div class="skeleton-lines">
+                <div class="skeleton-line medium"></div>
+                <div class="skeleton-line short"></div>
+                <div class="skeleton-line full"></div>
+            </div>
+        </div>
+    `).join('');
+}
 document.getElementById('sa-compose-modal').addEventListener('click', e => {
     if (e.target === document.getElementById('sa-compose-modal')) saCloseComposer();
 });
@@ -36,25 +90,50 @@ document.getElementById('sa-compose-modal').addEventListener('click', e => {
 // ── Inbox ───────────────────────────────────────────────────────
 function saLoadInbox() {
     const list = document.getElementById('sa-inbox-list');
-    list.innerHTML = '<div class="v2-loading"><div class="v2-spinner"></div><span>Loading inbox…</span></div>';
+    list.innerHTML = saSkeletonRows(8);
+
+    const banner = document.getElementById('sa-new-banner');
+    if (banner) banner.classList.remove('visible');
 
     const q = document.getElementById('sa-search').value.trim();
     const query = q ? encodeURIComponent(q) : 'in%3Ainbox';
 
     fetch(`/api/calendar-email/emails?q=${query}&max=40`)
         .then(r => r.json())
-        .then(emails => {
-            if (emails.error) {
-                list.innerHTML = `<div class="v2-loading"><span>⚠ ${escHtml(emails.error)}</span></div>`;
+        .then(data => {
+            if (data.error) {
+                list.innerHTML = `<div class="v2-loading"><span>⚠ ${escHtml(data.error)}</span></div>`;
                 return;
             }
-            saAllEmails = emails;
+            // API now returns {emails: [...], nextPageToken: ...}
+            saAllEmails = data.emails || data || [];
+            saNextPageToken = data.nextPageToken || null;
             saRenderInbox();
             saPrimeIntentDetection();
+            saUpdateTabTitle();
         })
         .catch(err => {
             list.innerHTML = `<div class="v2-loading"><span>Error: ${escHtml(err.message)}</span></div>`;
         });
+}
+
+function saLoadMore() {
+    if (!saNextPageToken) return;
+    const q = document.getElementById('sa-search').value.trim() || 'in:inbox';
+    fetch(`/api/emails/more?q=${encodeURIComponent(q)}&max=40&pageToken=${encodeURIComponent(saNextPageToken)}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { showToast('Error: ' + data.error, 'error'); return; }
+            saNextPageToken = data.nextPageToken || null;
+            saAllEmails = [...saAllEmails, ...(data.emails || [])];
+            saRenderInbox();
+        })
+        .catch(err => showToast('Error: ' + err.message, 'error'));
+}
+
+function saUpdateTabTitle() {
+    const unread = saAllEmails.filter(e => (e.labels || []).includes('UNREAD')).length;
+    document.title = unread > 0 ? `(${unread}) Scheduling Assist` : 'Scheduling Assist';
 }
 
 function saRenderInbox() {
@@ -64,6 +143,7 @@ function saRenderInbox() {
     saAllEmails.forEach(email => {
         const row = document.createElement('div');
         const isUnread = (email.labels || []).includes('UNREAD');
+        const isStarred = (email.labels || []).includes('STARRED');
         row.className = 'sa-email-row' +
             (saSelectedEmail?.id === email.id ? ' selected' : '') +
             (isUnread ? ' unread' : '');
@@ -81,21 +161,57 @@ function saRenderInbox() {
             tagsHtml = '<div class="sa-email-tags"><span class="sa-intent-badge" style="opacity:.7;">AI intent check…</span></div>';
         }
 
+        const attachIcon = email.hasAttachments ? '<span class="v2-attach-icon" title="Has attachments">📎</span>' : '';
+
         row.innerHTML = `
             <div class="v2-avatar" style="background:${color}">${initial}</div>
             <div class="sa-email-info">
                 <div class="sa-email-top">
                     <span class="sa-email-sender">${isUnread ? '<span class="v2-unread-dot"></span> ' : ''}${escHtml(email.from_name || email.from_email)}</span>
-                    <span class="sa-email-date">${fmtDate(email.date)}</span>
+                    <span style="display:flex;align-items:center;gap:4px;">${attachIcon}<span class="sa-email-date">${fmtDate(email.date)}</span></span>
                 </div>
                 <div class="sa-email-subject">${escHtml(email.subject)}</div>
                 <div class="sa-email-snippet">${escHtml(email.snippet)}</div>
                 ${tagsHtml}
-            </div>`;
+            </div>
+            <button class="v2-star-btn${isStarred ? ' starred' : ''}" title="${isStarred ? 'Unstar' : 'Star'}" onclick="saToggleStar(event, '${escAttr(email.id)}')">★</button>`;
 
         row.addEventListener('click', () => saShowDetail(email));
         list.appendChild(row);
     });
+
+    // Load more button
+    if (saNextPageToken) {
+        const btn = document.createElement('button');
+        btn.className = 'v2-btn v2-btn-ghost v2-load-more';
+        btn.textContent = 'Load more…';
+        btn.onclick = saLoadMore;
+        list.appendChild(btn);
+    }
+}
+
+// ── Star toggle ──────────────────────────────────────────────────
+function saToggleStar(event, emailId) {
+    event.stopPropagation();
+    const email = saAllEmails.find(e => e.id === emailId);
+    if (!email) return;
+    const isStarred = (email.labels || []).includes('STARRED');
+    const endpoint = isStarred ? '/api/email/unstar' : '/api/email/star';
+    // Optimistic update
+    if (isStarred) {
+        email.labels = (email.labels || []).filter(l => l !== 'STARRED');
+    } else {
+        email.labels = [...(email.labels || []), 'STARRED'];
+    }
+    saRenderInbox();
+    fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: emailId }),
+    })
+    .then(r => r.json())
+    .then(data => { if (data.error) { showToast('Star error: ' + data.error, 'error'); } })
+    .catch(() => { showToast('Could not update star', 'error'); });
 }
 
 // ── Scheduling intent detection ─────────────────────────────────
@@ -251,10 +367,18 @@ function saBuildDetailHtml(email, intentInfo, checkingIntent) {
             <div class="sa-detail-body">${escHtml(email.body || email.snippet)}</div>
         </div>
         <div class="sa-reply-bar">
-            <div class="sa-reply-to">Replying to ${escHtml(email.from_name || email.from_email)}</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <button class="v2-btn v2-btn-sm${saReplyMode === 'reply' ? ' v2-btn-secondary' : ' v2-btn-ghost'}" onclick="saSetReplyMode('reply')">Reply</button>
+                <button class="v2-btn v2-btn-sm${saReplyMode === 'reply-all' ? ' v2-btn-secondary' : ' v2-btn-ghost'}" onclick="saSetReplyMode('reply-all')">Reply All</button>
+                <span class="sa-reply-to" style="flex:1;font-size:12px;color:var(--text-muted);">
+                    → ${saReplyMode === 'reply-all'
+                        ? escHtml([email.from_email, ...(email.to_addresses || [])].join(', '))
+                        : escHtml(email.from_name || email.from_email)}
+                </span>
+            </div>
             <textarea id="sa-reply-text" class="v2-textarea sa-reply-textarea" rows="3" placeholder="Write a reply…"></textarea>
             <div class="sa-reply-actions">
-                <button class="v2-btn v2-btn-primary v2-btn-sm" onclick="saSendReply()">Send Reply</button>
+                <button class="v2-btn v2-btn-primary v2-btn-sm" onclick="saSendReply()">Send</button>
             </div>
         </div>`;
 }
@@ -611,17 +735,31 @@ function saInsertReply() {
     }
 }
 
+// ── Reply mode ───────────────────────────────────────────────────
+function saSetReplyMode(mode) {
+    saReplyMode = mode;
+    if (saSelectedEmail) {
+        const panel = document.getElementById('sa-detail');
+        const intentInfo = saIntentByEmailId.get(saSelectedEmail.id) || null;
+        panel.innerHTML = saBuildDetailHtml(saSelectedEmail, intentInfo, false);
+    }
+}
+
 // ── Reply and actions ───────────────────────────────────────────
 function saSendReply() {
     if (!saSelectedEmail) return;
     const text = document.getElementById('sa-reply-text')?.value?.trim();
     if (!text) return;
 
+    const toAddresses = saReplyMode === 'reply-all'
+        ? [saSelectedEmail.from_email, ...(saSelectedEmail.to_addresses || [])].join(', ')
+        : saSelectedEmail.from_email;
+
     fetch('/api/calendar-email/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            to: saSelectedEmail.from_email,
+            to: toAddresses,
             subject: 'Re: ' + saSelectedEmail.subject,
             body: text,
             threadId: saSelectedEmail.threadId,
@@ -629,12 +767,12 @@ function saSendReply() {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.error) { alert('Error: ' + data.error); return; }
+        if (data.error) { showToast('Error: ' + data.error, 'error'); return; }
         document.getElementById('sa-reply-text').value = '';
-        alert('Reply sent!');
+        showToast('Reply sent!', 'success');
         saLoadInbox();
     })
-    .catch(err => alert('Error: ' + err.message));
+    .catch(err => showToast('Error: ' + err.message, 'error'));
 }
 
 function saMarkUnread(messageId) {
@@ -645,7 +783,7 @@ function saMarkUnread(messageId) {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.error) { alert('Error: ' + data.error); return; }
+        if (data.error) { showToast('Error: ' + data.error, 'error'); return; }
         const email = saAllEmails.find(e => e.id === messageId);
         if (email && !email.labels.includes('UNREAD')) email.labels.push('UNREAD');
         saSelectedEmail = null;
@@ -653,7 +791,7 @@ function saMarkUnread(messageId) {
         document.getElementById('sa-detail').innerHTML = `
             <div class="sa-detail-placeholder"><div class="sa-placeholder-icon">✉</div><p>Select an email to read</p></div>`;
     })
-    .catch(err => alert('Error: ' + err.message));
+    .catch(err => showToast('Error: ' + err.message, 'error'));
 }
 
 function saDeleteEmail(messageId) {
@@ -665,14 +803,14 @@ function saDeleteEmail(messageId) {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.error) { alert('Error: ' + data.error); return; }
+        if (data.error) { showToast('Error: ' + data.error, 'error'); return; }
         saAllEmails = saAllEmails.filter(e => e.id !== messageId);
         saSelectedEmail = null;
         saRenderInbox();
         document.getElementById('sa-detail').innerHTML = `
             <div class="sa-detail-placeholder"><div class="sa-placeholder-icon">✉</div><p>Select an email to read</p></div>`;
     })
-    .catch(err => alert('Error: ' + err.message));
+    .catch(err => showToast('Error: ' + err.message, 'error'));
 }
 
 // ── Composer ────────────────────────────────────────────────────
@@ -691,7 +829,7 @@ function saSendCompose() {
     const to = document.getElementById('sa-compose-to').value.trim();
     const subject = document.getElementById('sa-compose-subject').value.trim();
     const body = document.getElementById('sa-compose-body').value.trim();
-    if (!to || !subject || !body) { alert('Please fill in all fields'); return; }
+    if (!to || !subject || !body) { showToast('Please fill in all fields', 'error'); return; }
 
     fetch('/api/calendar-email/send', {
         method: 'POST',
@@ -700,12 +838,12 @@ function saSendCompose() {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.error) { alert('Error: ' + data.error); return; }
+        if (data.error) { showToast('Error: ' + data.error, 'error'); return; }
         saCloseComposer();
-        alert('Email sent!');
+        showToast('Email sent!', 'success');
         saLoadInbox();
     })
-    .catch(err => alert('Error: ' + err.message));
+    .catch(err => showToast('Error: ' + err.message, 'error'));
 }
 
 // ── Helpers ─────────────────────────────────────────────────────

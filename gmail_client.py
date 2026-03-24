@@ -135,20 +135,37 @@ def _extract_sender_name_email(from_header):
     return name, email
 
 
-def fetch_emails(max_results=50, query=""):
+def _has_attachments(payload):
+    """Recursively check if a message payload contains non-text attachments."""
+    filename = payload.get("filename", "")
+    mime = payload.get("mimeType", "")
+    if filename and not mime.startswith("text/"):
+        return True
+    for part in payload.get("parts", []):
+        if _has_attachments(part):
+            return True
+    return False
+
+
+def fetch_emails(max_results=50, query="", page_token=None):
     """
     Fetch recent emails from the user's inbox.
-    Returns a list of dicts with id, threadId, subject, from_name, from_email,
-    to, date, snippet, body, labels.
+    Returns a dict: {"emails": [...], "next_page_token": str|None}.
+    Each email dict has id, threadId, subject, from_name, from_email,
+    to, date, snippet, body, labels, hasAttachments.
     """
     service = get_gmail_service()
+    list_kwargs = dict(userId="me", maxResults=max_results, q=query or "in:inbox")
+    if page_token:
+        list_kwargs["pageToken"] = page_token
     results = (
         service.users()
         .messages()
-        .list(userId="me", maxResults=max_results, q=query or "in:inbox")
+        .list(**list_kwargs)
         .execute()
     )
     messages = results.get("messages", [])
+    next_page_token = results.get("nextPageToken")
 
     emails = []
     for msg_stub in messages:
@@ -158,9 +175,10 @@ def fetch_emails(max_results=50, query=""):
             .get(userId="me", id=msg_stub["id"], format="full")
             .execute()
         )
-        headers = _parse_headers(msg.get("payload", {}).get("headers", []))
+        payload = msg.get("payload", {})
+        headers = _parse_headers(payload.get("headers", []))
         from_name, from_email = _extract_sender_name_email(headers.get("From", ""))
-        body = _decode_body(msg.get("payload", {}))
+        body = _decode_body(payload)
 
         emails.append(
             {
@@ -175,10 +193,11 @@ def fetch_emails(max_results=50, query=""):
                 "snippet": html_mod.unescape(msg.get("snippet", "")),
                 "body": body,
                 "labels": msg.get("labelIds", []),
+                "hasAttachments": _has_attachments(payload),
             }
         )
 
-    return emails
+    return {"emails": emails, "next_page_token": next_page_token}
 
 
 def fetch_thread(thread_id):
@@ -187,9 +206,10 @@ def fetch_thread(thread_id):
     thread = service.users().threads().get(userId="me", id=thread_id, format="full").execute()
     messages = []
     for msg in thread.get("messages", []):
-        headers = _parse_headers(msg.get("payload", {}).get("headers", []))
+        payload = msg.get("payload", {})
+        headers = _parse_headers(payload.get("headers", []))
         from_name, from_email = _extract_sender_name_email(headers.get("From", ""))
-        body = _decode_body(msg.get("payload", {}))
+        body = _decode_body(payload)
         messages.append(
             {
                 "id": msg["id"],
@@ -203,6 +223,7 @@ def fetch_thread(thread_id):
                 "snippet": html_mod.unescape(msg.get("snippet", "")),
                 "body": body,
                 "labels": msg.get("labelIds", []),
+                "hasAttachments": _has_attachments(payload),
             }
         )
     return messages
@@ -271,6 +292,24 @@ def trash_thread(thread_id):
     """Move an entire thread to trash."""
     service = get_gmail_service()
     return service.users().threads().trash(userId="me", id=thread_id).execute()
+
+
+def star_message(message_id):
+    """Add the STARRED label to a message."""
+    service = get_gmail_service()
+    return service.users().messages().modify(
+        userId="me", id=message_id,
+        body={"addLabelIds": ["STARRED"]}
+    ).execute()
+
+
+def unstar_message(message_id):
+    """Remove the STARRED label from a message."""
+    service = get_gmail_service()
+    return service.users().messages().modify(
+        userId="me", id=message_id,
+        body={"removeLabelIds": ["STARRED"]}
+    ).execute()
 
 
 # ── Label / category helpers ────────────────────────────────────────

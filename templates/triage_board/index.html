@@ -20,8 +20,15 @@
 
             <span class="tb-ai-status" id="tb-ai-status" title="Urgency scoring source">AI scoring</span>
 
+            <button class="v2-btn v2-btn-primary v2-btn-sm" onclick="tbOpenCompose()">Compose</button>
             <button class="v2-btn v2-btn-ghost v2-btn-icon" onclick="tbLoadEmails()" title="Refresh">↻</button>
         </div>
+    </div>
+
+    <!-- New email banner -->
+    <div class="v2-new-email-banner" id="tb-new-banner">
+        <span><strong id="tb-new-count">0</strong> new email(s)</span>
+        <button class="v2-btn v2-btn-sm v2-btn-primary" onclick="tbLoadEmails()">Refresh</button>
     </div>
 
     <!-- Three triage columns -->
@@ -86,6 +93,25 @@
         <div id="tb-detail-content"></div>
     </div>
 </div>
+
+<!-- Compose modal -->
+<div class="v2-modal-overlay" id="tb-compose-modal" style="display:none;">
+    <div class="v2-modal">
+        <button class="v2-modal-close" onclick="tbCloseCompose()">✕</button>
+        <h2 style="font-size:16px;font-weight:600;margin-bottom:16px;">New Email</h2>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+            <input type="email" id="tb-compose-to" class="v2-input" placeholder="To">
+            <input type="text" id="tb-compose-subject" class="v2-input" placeholder="Subject">
+            <textarea id="tb-compose-body" class="v2-textarea" rows="6" placeholder="Write your message…"></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button class="v2-btn v2-btn-secondary" onclick="tbCloseCompose()">Cancel</button>
+                <button class="v2-btn v2-btn-primary" onclick="tbSendCompose()">Send</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="v2-toast-container"></div>
 {% endblock %}
 
 {% block extra_js %}

@@ -16,6 +16,10 @@
                 <button class="v2-btn v2-btn-primary v2-btn-sm" onclick="saOpenComposer()">Compose</button>
             </div>
         </div>
+        <div class="v2-new-email-banner" id="sa-new-banner">
+            <span><strong id="sa-new-count">0</strong> new email(s)</span>
+            <button class="v2-btn v2-btn-sm v2-btn-primary" onclick="saLoadInbox()">Refresh</button>
+        </div>
         <div class="sa-inbox-list" id="sa-inbox-list">
             <div class="v2-loading"><div class="v2-spinner"></div><span>Loading inbox…</span></div>
         </div>
@@ -57,6 +61,7 @@
         </div>
     </div>
 </div>
+<div id="v2-toast-container"></div>
 {% endblock %}
 
 {% block extra_js %}
