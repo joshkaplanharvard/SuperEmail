@@ -3,12 +3,13 @@ Google Calendar API client – fetches free/busy data and upcoming events
 for the Calendar-Integrated Email prototype.
 """
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from googleapiclient.discovery import build
 
 from gmail_client import get_credentials
 
-_cached_user_tz: str | None = None
+_cached_user_tz = None  # type: Optional[str]
 
 
 def get_calendar_service():
@@ -16,7 +17,7 @@ def get_calendar_service():
     return build("calendar", "v3", credentials=get_credentials())
 
 
-def get_user_timezone() -> str:
+def get_user_timezone():
     """Return the authenticated user's calendar timezone (e.g. 'America/New_York').
     Falls back to UTC if the setting cannot be read."""
     global _cached_user_tz
