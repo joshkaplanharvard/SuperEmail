@@ -208,6 +208,7 @@ function enrichThread(thread) {
 }
 
 function tbApplyAiScores() {
+    const BATCH_SIZE = 15; // Match server cap to avoid timeouts
     const threadsPayload = tbAllThreads.map(t => ({
         threadId: t.threadId,
         subject: t.subject,
@@ -224,49 +225,61 @@ function tbApplyAiScores() {
 
     tbSetAiStatus('Scoring with Harvard AI...');
 
-    fetch('/api/triage/score', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ threads: threadsPayload }),
-    })
-        .then(r => r.json())
-        .then(data => {
-            if (!data.enabled || data.error) {
-                tbSetAiStatus('AI scoring unavailable');
-                return;
-            }
+    // Score in batches then merge results
+    const batches = [];
+    for (let i = 0; i < threadsPayload.length; i += BATCH_SIZE) {
+        batches.push(threadsPayload.slice(i, i + BATCH_SIZE));
+    }
 
-            const byThreadId = {};
+    Promise.all(batches.map(batch =>
+        fetch('/api/triage/score', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threads: batch }),
+        }).then(r => r.json())
+    ))
+    .then(responses => {
+        const byThreadId = {};
+        let anyEnabled = false;
+        let anyCached = true;
+
+        for (const data of responses) {
+            if (data.error && !data.enabled) continue; // completely disabled
+            if (data.error) { tbSetAiStatus('AI scoring unavailable'); return; }
+            anyEnabled = true;
+            if (!data.cached) anyCached = false;
             (data.results || []).forEach(r => {
                 if (r.threadId) byThreadId[r.threadId] = r;
             });
+        }
 
-            tbAllThreads = tbAllThreads.map(t => {
-                const scored = byThreadId[t.threadId];
-                if (!scored) return t;
-                const tags = (t.tags || []).filter(tag => !['Scheduling', 'Mailing list', 'Direct'].includes(tag));
-                if (scored.bucket === 'schedule' && !tags.includes('Scheduling')) {
-                    tags.unshift('Scheduling');
-                }
-                tags.unshift(scored.isMailingList ? 'Mailing list' : 'Direct');
-                // preserve STARRED tag
-                if (t.tags.includes('STARRED') && !tags.includes('STARRED')) tags.push('STARRED');
-                return {
-                    ...t,
-                    urgencyStars: scored.urgencyStars || 1,
-                    bucket: tbBucketOverrides[t.threadId] || scored.bucket || t.bucket,
-                    tags,
-                    aiScored: true,
-                    aiReasons: scored.reasons || [],
-                };
-            });
+        if (!anyEnabled) { tbSetAiStatus('AI scoring unavailable'); return; }
 
-            tbSetAiStatus(data.cached ? 'AI scoring active (cached)' : 'AI scoring active', true);
-            tbFilterEmails();
-        })
-        .catch(() => {
-            tbSetAiStatus('AI scoring unavailable');
+        tbAllThreads = tbAllThreads.map(t => {
+            const scored = byThreadId[t.threadId];
+            if (!scored) return t;
+            const tags = (t.tags || []).filter(tag => !['Scheduling', 'Mailing list', 'Direct'].includes(tag));
+            if (scored.bucket === 'schedule' && !tags.includes('Scheduling')) {
+                tags.unshift('Scheduling');
+            }
+            tags.unshift(scored.isMailingList ? 'Mailing list' : 'Direct');
+            if (t.tags.includes('STARRED') && !tags.includes('STARRED')) tags.push('STARRED');
+            return {
+                ...t,
+                urgencyStars: scored.urgencyStars || 1,
+                bucket: tbBucketOverrides[t.threadId] || scored.bucket || t.bucket,
+                tags,
+                aiScored: true,
+                aiReasons: scored.reasons || [],
+            };
         });
+
+        tbSetAiStatus(anyCached ? 'AI scoring active (cached)' : 'AI scoring active', true);
+        tbFilterEmails();
+    })
+    .catch(() => {
+        tbSetAiStatus('AI scoring unavailable');
+    });
 }
 
 function tbSetAiStatus(text, isOn = false) {

@@ -215,7 +215,7 @@ def get_usage_summary(recent_limit: int = 20) -> dict[str, Any]:
 
 def score_threads(
     threads: list[dict[str, Any]],
-    timeout_seconds: int = 20,
+    timeout_seconds: int = 45,
     include_usage: bool = False,
 ) -> list[dict[str, Any]] | dict[str, Any]:
     if not is_enabled():

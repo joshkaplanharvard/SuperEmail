@@ -131,8 +131,8 @@ def api_triage_score():
     if not isinstance(threads, list):
         return jsonify({"enabled": True, "error": "threads must be a list"}), 400
 
-    # Keep requests bounded so scoring stays fast and cheap.
-    threads = threads[:40]
+    # Cap at 15 threads per AI call — larger batches time out on the Harvard endpoint.
+    threads = threads[:15]
 
     try:
         scored = harvard_ai_client.score_threads(threads, include_usage=True)
